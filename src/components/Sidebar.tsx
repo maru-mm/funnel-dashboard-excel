@@ -8,7 +8,8 @@ import {
   Layers, 
   CreditCard,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  Copy
 } from 'lucide-react';
 
 const menuItems = [
@@ -16,6 +17,11 @@ const menuItems = [
     name: 'Dashboard',
     href: '/',
     icon: LayoutDashboard,
+  },
+  {
+    name: 'Clone Landing',
+    href: '/clone-landing',
+    icon: Copy,
   },
   {
     name: 'Copy Analyzer',
