@@ -26,7 +26,38 @@ export interface Product {
   description: string;
   price: number;
   imageUrl?: string;
+  benefits: string[];
+  ctaText: string;
+  ctaUrl: string;
+  brandName: string;
   createdAt: Date;
+}
+
+export interface SwipeApiResponse {
+  success: boolean;
+  original_url: string;
+  original_title: string;
+  new_title: string;
+  html: string;
+  changes_made: string[];
+  original_length: number;
+  new_length: number;
+  processing_time_seconds: number;
+  method_used: string;
+  error: string | null;
+  warnings: string[];
+}
+
+export interface SwipedPageData {
+  html: string;
+  originalTitle: string;
+  newTitle: string;
+  originalLength: number;
+  newLength: number;
+  processingTime: number;
+  methodUsed: string;
+  changesMade: string[];
+  swipedAt: Date;
 }
 
 export interface FunnelAnalysis {
@@ -56,6 +87,7 @@ export interface FunnelPage {
   swipeStatus: SwipeStatus;
   swipeResult?: string;
   clonedData?: ClonedPageData;
+  swipedData?: SwipedPageData;
   analysisStatus?: SwipeStatus;
   analysisResult?: string;
   extractedData?: FunnelAnalysis;
@@ -72,6 +104,7 @@ export interface PostPurchasePage {
   swipeStatus: SwipeStatus;
   swipeResult?: string;
   clonedData?: ClonedPageData;
+  swipedData?: SwipedPageData;
   createdAt: Date;
   updatedAt: Date;
 }

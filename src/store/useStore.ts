@@ -2,7 +2,9 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Product, FunnelPage, PostPurchasePage } from '@/types';
+import { Product, FunnelPage, PostPurchasePage, SwipeApiResponse } from '@/types';
+
+const SWIPE_API_URL = 'https://claude-code-agents.fly.dev/api/landing/swipe';
 
 interface Store {
   // Products
@@ -36,15 +38,23 @@ export const useStore = create<Store>()(
         {
           id: '1',
           name: 'Prodotto Demo 1',
-          description: 'Descrizione prodotto demo',
+          description: 'Integratore naturale per il benessere quotidiano',
           price: 47.00,
+          benefits: ['Aumenta l\'energia', 'Migliora il sonno', 'Supporta il sistema immunitario'],
+          ctaText: 'Acquista Ora',
+          ctaUrl: 'https://example.com/buy',
+          brandName: 'NaturalWell',
           createdAt: new Date(),
         },
         {
           id: '2',
           name: 'Prodotto Demo 2',
-          description: 'Altro prodotto demo',
+          description: 'Corso online per il successo personale',
           price: 97.00,
+          benefits: ['Strategie comprovate', 'Accesso lifetime', 'Community esclusiva'],
+          ctaText: 'Iscriviti Subito',
+          ctaUrl: 'https://example.com/enroll',
+          brandName: 'SuccessAcademy',
           createdAt: new Date(),
         },
       ],
@@ -129,6 +139,23 @@ export const useStore = create<Store>()(
         const page = get().funnelPages.find((p) => p.id === id);
         if (!page || !page.urlToSwipe) return;
 
+        const product = get().products.find((p) => p.id === page.productId);
+        if (!product) {
+          set((state) => ({
+            funnelPages: state.funnelPages.map((p) =>
+              p.id === id
+                ? {
+                    ...p,
+                    swipeStatus: 'failed' as const,
+                    swipeResult: 'Seleziona un prodotto prima di lanciare lo swipe',
+                    updatedAt: new Date(),
+                  }
+                : p
+            ),
+          }));
+          return;
+        }
+
         set((state) => ({
           funnelPages: state.funnelPages.map((p) =>
             p.id === id
@@ -138,17 +165,24 @@ export const useStore = create<Store>()(
         }));
 
         try {
-          const response = await fetch('/api/landing/clone', {
+          const response = await fetch(SWIPE_API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              url: page.urlToSwipe,
-              wait_for_js: false,
-              remove_scripts: true,
+              source_url: page.urlToSwipe,
+              product: {
+                name: product.name,
+                description: product.description,
+                benefits: product.benefits,
+                cta_text: product.ctaText,
+                cta_url: product.ctaUrl,
+                brand_name: product.brandName,
+              },
+              language: 'it',
             }),
           });
 
-          const data = await response.json();
+          const data: SwipeApiResponse = await response.json();
 
           if (!response.ok || !data.success) {
             set((state) => ({
@@ -157,7 +191,7 @@ export const useStore = create<Store>()(
                   ? {
                       ...p,
                       swipeStatus: 'failed' as const,
-                      swipeResult: data.error || 'Errore durante la clonazione',
+                      swipeResult: data.error || 'Errore durante lo swipe',
                       updatedAt: new Date(),
                     }
                   : p
@@ -166,21 +200,24 @@ export const useStore = create<Store>()(
             return;
           }
 
-          // Successo - salva i dati clonati
+          // Successo - salva i dati swipati
           set((state) => ({
             funnelPages: state.funnelPages.map((p) =>
               p.id === id
                 ? {
                     ...p,
                     swipeStatus: 'completed' as const,
-                    swipeResult: `✓ Clonato: ${data.title || 'Pagina'} (${data.content_length} chars, ${data.duration_seconds?.toFixed(2)}s)`,
-                    clonedData: {
+                    swipeResult: `✓ Swipe completato: "${data.new_title}" (${data.new_length} chars, ${data.processing_time_seconds.toFixed(2)}s)`,
+                    swipedData: {
                       html: data.html,
-                      title: data.title,
-                      method_used: data.method_used,
-                      content_length: data.content_length,
-                      duration_seconds: data.duration_seconds,
-                      cloned_at: new Date(),
+                      originalTitle: data.original_title,
+                      newTitle: data.new_title,
+                      originalLength: data.original_length,
+                      newLength: data.new_length,
+                      processingTime: data.processing_time_seconds,
+                      methodUsed: data.method_used,
+                      changesMade: data.changes_made,
+                      swipedAt: new Date(),
                     },
                     updatedAt: new Date(),
                   }
@@ -256,6 +293,23 @@ export const useStore = create<Store>()(
         const page = get().postPurchasePages.find((p) => p.id === id);
         if (!page || !page.urlToSwipe) return;
 
+        const product = get().products.find((p) => p.id === page.productId);
+        if (!product) {
+          set((state) => ({
+            postPurchasePages: state.postPurchasePages.map((p) =>
+              p.id === id
+                ? {
+                    ...p,
+                    swipeStatus: 'failed' as const,
+                    swipeResult: 'Seleziona un prodotto prima di lanciare lo swipe',
+                    updatedAt: new Date(),
+                  }
+                : p
+            ),
+          }));
+          return;
+        }
+
         set((state) => ({
           postPurchasePages: state.postPurchasePages.map((p) =>
             p.id === id
@@ -265,17 +319,24 @@ export const useStore = create<Store>()(
         }));
 
         try {
-          const response = await fetch('/api/landing/clone', {
+          const response = await fetch(SWIPE_API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              url: page.urlToSwipe,
-              wait_for_js: false,
-              remove_scripts: true,
+              source_url: page.urlToSwipe,
+              product: {
+                name: product.name,
+                description: product.description,
+                benefits: product.benefits,
+                cta_text: product.ctaText,
+                cta_url: product.ctaUrl,
+                brand_name: product.brandName,
+              },
+              language: 'it',
             }),
           });
 
-          const data = await response.json();
+          const data: SwipeApiResponse = await response.json();
 
           if (!response.ok || !data.success) {
             set((state) => ({
@@ -284,7 +345,7 @@ export const useStore = create<Store>()(
                   ? {
                       ...p,
                       swipeStatus: 'failed' as const,
-                      swipeResult: data.error || 'Errore durante la clonazione',
+                      swipeResult: data.error || 'Errore durante lo swipe',
                       updatedAt: new Date(),
                     }
                   : p
@@ -299,14 +360,17 @@ export const useStore = create<Store>()(
                 ? {
                     ...p,
                     swipeStatus: 'completed' as const,
-                    swipeResult: `✓ Clonato: ${data.title || 'Pagina'} (${data.content_length} chars)`,
-                    clonedData: {
+                    swipeResult: `✓ Swipe completato: "${data.new_title}" (${data.new_length} chars)`,
+                    swipedData: {
                       html: data.html,
-                      title: data.title,
-                      method_used: data.method_used,
-                      content_length: data.content_length,
-                      duration_seconds: data.duration_seconds,
-                      cloned_at: new Date(),
+                      originalTitle: data.original_title,
+                      newTitle: data.new_title,
+                      originalLength: data.original_length,
+                      newLength: data.new_length,
+                      processingTime: data.processing_time_seconds,
+                      methodUsed: data.method_used,
+                      changesMade: data.changes_made,
+                      swipedAt: new Date(),
                     },
                     updatedAt: new Date(),
                   }

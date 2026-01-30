@@ -12,6 +12,8 @@ import {
   ExternalLink,
   CheckCircle,
   XCircle,
+  Eye,
+  Code,
 } from 'lucide-react';
 
 export default function PostPurchaseFunnel() {
@@ -25,6 +27,12 @@ export default function PostPurchaseFunnel() {
   } = useStore();
 
   const [loadingIds, setLoadingIds] = useState<string[]>([]);
+  const [htmlPreviewModal, setHtmlPreviewModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    html: string;
+    metadata: { method: string; length: number; duration: number } | null;
+  }>({ isOpen: false, title: '', html: '', metadata: null });
 
   const handleAddPage = () => {
     addPostPurchasePage({
@@ -40,6 +48,21 @@ export default function PostPurchaseFunnel() {
     setLoadingIds((prev) => [...prev, id]);
     await launchPostPurchaseSwipe(id);
     setLoadingIds((prev) => prev.filter((i) => i !== id));
+    
+    // Auto-open preview if swipe was successful
+    const updatedPage = useStore.getState().postPurchasePages.find((p) => p.id === id);
+    if (updatedPage?.swipedData) {
+      setHtmlPreviewModal({
+        isOpen: true,
+        title: updatedPage.swipedData.newTitle || updatedPage.name,
+        html: updatedPage.swipedData.html,
+        metadata: {
+          method: updatedPage.swipedData.methodUsed,
+          length: updatedPage.swipedData.newLength,
+          duration: updatedPage.swipedData.processingTime,
+        },
+      });
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -94,7 +117,7 @@ export default function PostPurchaseFunnel() {
                   <th className="min-w-[150px]">Prodotto</th>
                   <th className="min-w-[300px]">URL da Swipare</th>
                   <th className="min-w-[120px]">Stato</th>
-                  <th className="min-w-[200px]">Risultato Swipe</th>
+                  <th className="min-w-[250px]">Risultato Swipe</th>
                   <th className="min-w-[150px]">Azioni</th>
                 </tr>
               </thead>
@@ -203,9 +226,43 @@ export default function PostPurchaseFunnel() {
                           {page.swipeStatus === 'failed' && (
                             <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
                           )}
-                          <span className="text-sm truncate">
+                          <span className="text-sm truncate max-w-[150px]" title={page.swipeResult || ''}>
                             {page.swipeResult || '-'}
                           </span>
+                          {(page.swipedData || page.clonedData) && (
+                            <button
+                              onClick={() => {
+                                if (page.swipedData) {
+                                  setHtmlPreviewModal({
+                                    isOpen: true,
+                                    title: page.swipedData.newTitle || page.name,
+                                    html: page.swipedData.html,
+                                    metadata: {
+                                      method: page.swipedData.methodUsed,
+                                      length: page.swipedData.newLength,
+                                      duration: page.swipedData.processingTime,
+                                    },
+                                  });
+                                } else if (page.clonedData) {
+                                  setHtmlPreviewModal({
+                                    isOpen: true,
+                                    title: page.clonedData!.title || page.name,
+                                    html: page.clonedData!.html,
+                                    metadata: {
+                                      method: page.clonedData!.method_used,
+                                      length: page.clonedData!.content_length,
+                                      duration: page.clonedData!.duration_seconds,
+                                    },
+                                  });
+                                }
+                              }}
+                              className="flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 hover:bg-purple-200 rounded text-xs font-medium"
+                              title="Visualizza HTML swipato"
+                            >
+                              <Eye className="w-3 h-3" />
+                              Preview
+                            </button>
+                          )}
                         </div>
                       </td>
 
@@ -217,16 +274,18 @@ export default function PostPurchaseFunnel() {
                             disabled={
                               loadingIds.includes(page.id) ||
                               page.swipeStatus === 'in_progress' ||
-                              !page.urlToSwipe
+                              !page.urlToSwipe ||
+                              !page.productId
                             }
                             className={`flex items-center gap-1 px-3 py-1 rounded text-sm font-medium transition-colors ${
                               loadingIds.includes(page.id) ||
                               page.swipeStatus === 'in_progress'
                                 ? 'bg-yellow-100 text-yellow-700'
-                                : !page.urlToSwipe
+                                : !page.urlToSwipe || !page.productId
                                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                 : 'bg-green-100 text-green-700 hover:bg-green-200'
                             }`}
+                            title={!page.productId ? 'Seleziona prima un prodotto' : 'Lancia Swipe'}
                           >
                             {loadingIds.includes(page.id) ||
                             page.swipeStatus === 'in_progress' ? (
@@ -270,6 +329,92 @@ export default function PostPurchaseFunnel() {
           </div>
         </div>
       </div>
+
+      {/* HTML Preview Modal */}
+      {htmlPreviewModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-purple-600 to-pink-600">
+              <div className="flex items-center gap-3">
+                <Code className="w-6 h-6 text-white" />
+                <div>
+                  <h2 className="text-xl font-bold text-white">
+                    {htmlPreviewModal.title}
+                  </h2>
+                  {htmlPreviewModal.metadata && (
+                    <p className="text-white/80 text-sm">
+                      Metodo: {htmlPreviewModal.metadata.method} | 
+                      {htmlPreviewModal.metadata.length.toLocaleString()} chars | 
+                      {htmlPreviewModal.metadata.duration.toFixed(2)}s
+                    </p>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setHtmlPreviewModal({ isOpen: false, title: '', html: '', metadata: null })}
+                className="text-white/80 hover:text-white text-2xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Modal Body - Tabs */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              <div className="flex border-b border-gray-200">
+                <button
+                  className="px-4 py-2 text-sm font-medium text-purple-600 border-b-2 border-purple-600"
+                >
+                  Preview
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(htmlPreviewModal.html);
+                    alert('HTML copiato negli appunti!');
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+                >
+                  Copia HTML
+                </button>
+              </div>
+              
+              {/* Preview iframe */}
+              <div className="flex-1 overflow-hidden bg-gray-100 p-2">
+                <iframe
+                  srcDoc={htmlPreviewModal.html}
+                  className="w-full h-full bg-white rounded border border-gray-300"
+                  sandbox="allow-same-origin"
+                  title="HTML Preview"
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  const blob = new Blob([htmlPreviewModal.html], { type: 'text/html' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${htmlPreviewModal.title.replace(/[^a-z0-9]/gi, '_')}.html`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                Scarica HTML
+              </button>
+              <button
+                onClick={() => setHtmlPreviewModal({ isOpen: false, title: '', html: '', metadata: null })}
+                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Chiudi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

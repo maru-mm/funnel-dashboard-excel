@@ -19,7 +19,7 @@ const menuItems = [
     icon: LayoutDashboard,
   },
   {
-    name: 'Clone Landing',
+    name: 'Clone & Swipe',
     href: '/clone-landing',
     icon: Copy,
   },

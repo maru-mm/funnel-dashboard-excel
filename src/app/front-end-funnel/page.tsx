@@ -65,6 +65,21 @@ export default function FrontEndFunnel() {
     setLoadingIds((prev) => [...prev, id]);
     await launchSwipe(id);
     setLoadingIds((prev) => prev.filter((i) => i !== id));
+    
+    // Auto-open preview if swipe was successful
+    const updatedPage = useStore.getState().funnelPages.find((p) => p.id === id);
+    if (updatedPage?.swipedData) {
+      setHtmlPreviewModal({
+        isOpen: true,
+        title: updatedPage.swipedData.newTitle || updatedPage.name,
+        html: updatedPage.swipedData.html,
+        metadata: {
+          method: updatedPage.swipedData.methodUsed,
+          length: updatedPage.swipedData.newLength,
+          duration: updatedPage.swipedData.processingTime,
+        },
+      });
+    }
   };
 
   const handleAnalyze = async (page: typeof funnelPages[0]) => {
@@ -301,25 +316,41 @@ export default function FrontEndFunnel() {
                           {page.swipeStatus === 'failed' && (
                             <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
                           )}
-                          <span className="text-sm truncate">
+                          <span className="text-sm truncate max-w-[150px]" title={page.swipeResult || ''}>
                             {page.swipeResult || '-'}
                           </span>
-                          {page.clonedData && (
+                          {(page.swipedData || page.clonedData) && (
                             <button
-                              onClick={() => setHtmlPreviewModal({
-                                isOpen: true,
-                                title: page.clonedData!.title || page.name,
-                                html: page.clonedData!.html,
-                                metadata: {
-                                  method: page.clonedData!.method_used,
-                                  length: page.clonedData!.content_length,
-                                  duration: page.clonedData!.duration_seconds,
-                                },
-                              })}
-                              className="p-1 text-blue-500 hover:bg-blue-50 rounded"
-                              title="Visualizza HTML clonato"
+                              onClick={() => {
+                                if (page.swipedData) {
+                                  setHtmlPreviewModal({
+                                    isOpen: true,
+                                    title: page.swipedData.newTitle || page.name,
+                                    html: page.swipedData.html,
+                                    metadata: {
+                                      method: page.swipedData.methodUsed,
+                                      length: page.swipedData.newLength,
+                                      duration: page.swipedData.processingTime,
+                                    },
+                                  });
+                                } else if (page.clonedData) {
+                                  setHtmlPreviewModal({
+                                    isOpen: true,
+                                    title: page.clonedData!.title || page.name,
+                                    html: page.clonedData!.html,
+                                    metadata: {
+                                      method: page.clonedData!.method_used,
+                                      length: page.clonedData!.content_length,
+                                      duration: page.clonedData!.duration_seconds,
+                                    },
+                                  });
+                                }
+                              }}
+                              className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded text-xs font-medium"
+                              title="Visualizza HTML swipato"
                             >
-                              <Eye className="w-4 h-4" />
+                              <Eye className="w-3 h-3" />
+                              Preview
                             </button>
                           )}
                         </div>
