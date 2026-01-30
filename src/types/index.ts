@@ -29,6 +29,14 @@ export interface Product {
   createdAt: Date;
 }
 
+export interface FunnelAnalysis {
+  headline: string;
+  subheadline: string;
+  cta: string[];
+  price: string | null;
+  benefits: string[];
+}
+
 export interface FunnelPage {
   id: string;
   name: string;
@@ -38,6 +46,9 @@ export interface FunnelPage {
   urlToSwipe: string;
   swipeStatus: SwipeStatus;
   swipeResult?: string;
+  analysisStatus?: SwipeStatus;
+  analysisResult?: string;
+  extractedData?: FunnelAnalysis;
   createdAt: Date;
   updatedAt: Date;
 }

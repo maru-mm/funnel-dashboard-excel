@@ -18,6 +18,8 @@ import {
   ExternalLink,
   CheckCircle,
   XCircle,
+  Search,
+  FileText,
 } from 'lucide-react';
 
 export default function FrontEndFunnel() {
@@ -31,6 +33,13 @@ export default function FrontEndFunnel() {
   } = useStore();
 
   const [loadingIds, setLoadingIds] = useState<string[]>([]);
+  const [analyzingIds, setAnalyzingIds] = useState<string[]>([]);
+  const [analysisModal, setAnalysisModal] = useState<{
+    isOpen: boolean;
+    pageId: string;
+    result: string | null;
+    extractedData: { headline: string; subheadline: string; cta: string[]; price: string | null; benefits: string[] } | null;
+  }>({ isOpen: false, pageId: '', result: null, extractedData: null });
 
   const handleAddPage = () => {
     addFunnelPage({
@@ -47,6 +56,59 @@ export default function FrontEndFunnel() {
     setLoadingIds((prev) => [...prev, id]);
     await launchSwipe(id);
     setLoadingIds((prev) => prev.filter((i) => i !== id));
+  };
+
+  const handleAnalyze = async (page: typeof funnelPages[0]) => {
+    if (!page.urlToSwipe) return;
+    
+    setAnalyzingIds((prev) => [...prev, page.id]);
+    updateFunnelPage(page.id, { analysisStatus: 'in_progress' });
+
+    try {
+      const response = await fetch('/api/funnel/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: page.urlToSwipe,
+          pageType: page.pageType,
+          template: page.template,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        updateFunnelPage(page.id, { 
+          analysisStatus: 'failed',
+          analysisResult: data.error || 'Errore durante l\'analisi'
+        });
+      } else {
+        const resultText = data.analysis?.result || 
+                          data.analysis?.error || 
+                          JSON.stringify(data.analysis, null, 2);
+        
+        updateFunnelPage(page.id, { 
+          analysisStatus: 'completed',
+          analysisResult: resultText,
+          extractedData: data.extractedData
+        });
+
+        // Apri il modal con i risultati
+        setAnalysisModal({
+          isOpen: true,
+          pageId: page.id,
+          result: resultText,
+          extractedData: data.extractedData
+        });
+      }
+    } catch (error) {
+      updateFunnelPage(page.id, { 
+        analysisStatus: 'failed',
+        analysisResult: 'Errore di rete'
+      });
+    } finally {
+      setAnalyzingIds((prev) => prev.filter((i) => i !== page.id));
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -103,13 +165,14 @@ export default function FrontEndFunnel() {
                   <th className="min-w-[300px]">URL da Swipare</th>
                   <th className="min-w-[120px]">Stato</th>
                   <th className="min-w-[200px]">Risultato Swipe</th>
-                  <th className="min-w-[150px]">Azioni</th>
+                  <th className="min-w-[120px]">Analisi</th>
+                  <th className="min-w-[180px]">Azioni</th>
                 </tr>
               </thead>
               <tbody>
                 {funnelPages.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="text-center py-8 text-gray-500">
+                    <td colSpan={10} className="text-center py-8 text-gray-500">
                       Nessuna pagina. Clicca "Aggiungi Pagina" per iniziare.
                     </td>
                   </tr>
@@ -235,9 +298,80 @@ export default function FrontEndFunnel() {
                         </div>
                       </td>
 
+                      {/* Analysis Status */}
+                      <td className="text-center">
+                        {page.analysisStatus ? (
+                          <button
+                            onClick={() => {
+                              if (page.analysisResult) {
+                                setAnalysisModal({
+                                  isOpen: true,
+                                  pageId: page.id,
+                                  result: page.analysisResult,
+                                  extractedData: page.extractedData || null
+                                });
+                              }
+                            }}
+                            className={`px-2 py-1 rounded-full text-xs font-medium cursor-pointer hover:opacity-80 ${
+                              page.analysisStatus === 'completed'
+                                ? 'bg-purple-100 text-purple-800'
+                                : page.analysisStatus === 'failed'
+                                ? 'bg-red-100 text-red-800'
+                                : page.analysisStatus === 'in_progress'
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : 'bg-gray-100 text-gray-800'
+                            }`}
+                          >
+                            {page.analysisStatus === 'completed' ? (
+                              <span className="flex items-center gap-1">
+                                <FileText className="w-3 h-3" />
+                                Vedi
+                              </span>
+                            ) : page.analysisStatus === 'in_progress' ? (
+                              <span className="flex items-center gap-1">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                ...
+                              </span>
+                            ) : page.analysisStatus === 'failed' ? (
+                              'Errore'
+                            ) : (
+                              '-'
+                            )}
+                          </button>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </td>
+
                       {/* Actions */}
                       <td>
                         <div className="flex items-center gap-2">
+                          {/* Analyze Button */}
+                          <button
+                            onClick={() => handleAnalyze(page)}
+                            disabled={
+                              analyzingIds.includes(page.id) ||
+                              page.analysisStatus === 'in_progress' ||
+                              !page.urlToSwipe
+                            }
+                            className={`flex items-center gap-1 px-2 py-1 rounded text-sm font-medium transition-colors ${
+                              analyzingIds.includes(page.id) ||
+                              page.analysisStatus === 'in_progress'
+                                ? 'bg-purple-100 text-purple-700'
+                                : !page.urlToSwipe
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                            }`}
+                            title="Analizza Funnel Step"
+                          >
+                            {analyzingIds.includes(page.id) ||
+                            page.analysisStatus === 'in_progress' ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Search className="w-3 h-3" />
+                            )}
+                          </button>
+                          {/* Swipe Button */}
                           <button
                             onClick={() => handleLaunchSwipe(page.id)}
                             disabled={
@@ -245,7 +379,7 @@ export default function FrontEndFunnel() {
                               page.swipeStatus === 'in_progress' ||
                               !page.urlToSwipe
                             }
-                            className={`flex items-center gap-1 px-3 py-1 rounded text-sm font-medium transition-colors ${
+                            className={`flex items-center gap-1 px-2 py-1 rounded text-sm font-medium transition-colors ${
                               loadingIds.includes(page.id) ||
                               page.swipeStatus === 'in_progress'
                                 ? 'bg-yellow-100 text-yellow-700'
@@ -253,23 +387,20 @@ export default function FrontEndFunnel() {
                                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                 : 'bg-green-100 text-green-700 hover:bg-green-200'
                             }`}
+                            title="Lancia Swipe"
                           >
                             {loadingIds.includes(page.id) ||
                             page.swipeStatus === 'in_progress' ? (
-                              <>
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                Swipe...
-                              </>
+                              <Loader2 className="w-3 h-3 animate-spin" />
                             ) : (
-                              <>
-                                <Play className="w-3 h-3" />
-                                Swipe
-                              </>
+                              <Play className="w-3 h-3" />
                             )}
                           </button>
+                          {/* Delete Button */}
                           <button
                             onClick={() => deleteFunnelPage(page.id)}
                             className="p-1 text-red-500 hover:bg-red-50 rounded"
+                            title="Elimina"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -296,6 +427,99 @@ export default function FrontEndFunnel() {
           </div>
         </div>
       </div>
+
+      {/* Analysis Modal */}
+      {analysisModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-purple-600 to-blue-600">
+              <div className="flex items-center gap-3">
+                <FileText className="w-6 h-6 text-white" />
+                <h2 className="text-xl font-bold text-white">
+                  Analisi Funnel Step
+                </h2>
+              </div>
+              <button
+                onClick={() => setAnalysisModal({ isOpen: false, pageId: '', result: null, extractedData: null })}
+                className="text-white/80 hover:text-white text-2xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Extracted Data */}
+              {analysisModal.extractedData && (
+                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">ESTRATTO</span>
+                    Dati dalla Pagina
+                  </h3>
+                  <div className="space-y-3 text-sm">
+                    {analysisModal.extractedData.headline && (
+                      <div>
+                        <span className="font-medium text-gray-700">Headline:</span>
+                        <p className="text-gray-900 mt-1">&quot;{analysisModal.extractedData.headline}&quot;</p>
+                      </div>
+                    )}
+                    {analysisModal.extractedData.subheadline && (
+                      <div>
+                        <span className="font-medium text-gray-700">Subheadline:</span>
+                        <p className="text-gray-600 mt-1">{analysisModal.extractedData.subheadline}</p>
+                      </div>
+                    )}
+                    {analysisModal.extractedData.cta && analysisModal.extractedData.cta.length > 0 && (
+                      <div>
+                        <span className="font-medium text-gray-700">CTA:</span>
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {analysisModal.extractedData.cta.slice(0, 5).map((cta, i) => (
+                            <span key={i} className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs">
+                              {cta}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {analysisModal.extractedData.price && (
+                      <div>
+                        <span className="font-medium text-gray-700">Prezzo:</span>
+                        <span className="ml-2 bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-sm font-bold">
+                          {analysisModal.extractedData.price}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Analysis Result */}
+              <div className="bg-white rounded-lg p-4 border border-gray-200">
+                <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs">AI</span>
+                  Risultato Analisi
+                </h3>
+                <div className="prose prose-sm max-w-none">
+                  <pre className="whitespace-pre-wrap text-gray-700 text-sm leading-relaxed font-sans bg-gray-50 p-4 rounded-lg">
+                    {analysisModal.result}
+                  </pre>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setAnalysisModal({ isOpen: false, pageId: '', result: null, extractedData: null })}
+                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Chiudi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

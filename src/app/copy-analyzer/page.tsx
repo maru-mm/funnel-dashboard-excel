@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import Header from '@/components/Header';
 import { 
   Search, 
@@ -12,24 +12,37 @@ import {
   Sparkles
 } from 'lucide-react';
 
+interface AgentResponse {
+  agent_id: string;
+  agent_type: string;
+  status: 'completed' | 'failed' | 'running';
+  prompt: string;
+  messages: Array<{ role: string; content: string }>;
+  result: string | null;
+  error: string | null;
+  started_at: string;
+  completed_at: string;
+  duration_seconds: number;
+  turns_used: number;
+  cost_estimate: number | null;
+}
+
 interface AnalysisResult {
   headline: string;
   url: string;
-  analysis: {
-    result?: string;
-    output?: string;
-    [key: string]: unknown;
-  };
+  analysis: AgentResponse;
 }
 
 export default function CopyAnalyzerPage() {
-  const [url, setUrl] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleAnalyze = async () => {
-    if (!url.trim()) {
+    const url = inputRef.current?.value?.trim() || '';
+    
+    if (!url) {
       setError('Inserisci un URL valido');
       return;
     }
@@ -102,10 +115,9 @@ export default function CopyAnalyzerPage() {
           <div className="flex gap-3">
             <div className="flex-1 relative">
               <input
+                ref={inputRef}
                 type="url"
                 placeholder="https://esempio.com/landing-page"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
                 onKeyPress={handleKeyPress}
                 disabled={isLoading}
                 className="w-full px-4 py-3 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
@@ -114,7 +126,7 @@ export default function CopyAnalyzerPage() {
             </div>
             <button
               onClick={handleAnalyze}
-              disabled={isLoading || !url.trim()}
+              disabled={isLoading}
               className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
             >
               {isLoading ? (
@@ -188,20 +200,76 @@ export default function CopyAnalyzerPage() {
             {/* Analysis Result */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <div className="flex items-center gap-3 mb-4">
-                <div className="bg-purple-100 p-2 rounded-lg">
-                  <FileText className="w-5 h-5 text-purple-600" />
+                <div className={`p-2 rounded-lg ${result.analysis.status === 'completed' ? 'bg-purple-100' : 'bg-red-100'}`}>
+                  <FileText className={`w-5 h-5 ${result.analysis.status === 'completed' ? 'text-purple-600' : 'text-red-600'}`} />
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900">
-                  Analisi AI
-                </h3>
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    Analisi AI
+                  </h3>
+                  <div className="flex items-center gap-3 text-sm text-gray-500">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                      result.analysis.status === 'completed' 
+                        ? 'bg-green-100 text-green-800' 
+                        : result.analysis.status === 'failed'
+                        ? 'bg-red-100 text-red-800'
+                        : 'bg-yellow-100 text-yellow-800'
+                    }`}>
+                      {result.analysis.status === 'completed' ? 'Completato' : result.analysis.status === 'failed' ? 'Fallito' : 'In corso'}
+                    </span>
+                    {result.analysis.duration_seconds && (
+                      <span>Durata: {result.analysis.duration_seconds.toFixed(2)}s</span>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                <pre className="whitespace-pre-wrap text-gray-700 text-sm leading-relaxed font-sans">
-                  {typeof result.analysis === 'string' 
-                    ? result.analysis 
-                    : result.analysis.result || result.analysis.output || JSON.stringify(result.analysis, null, 2)}
-                </pre>
-              </div>
+
+              {/* Error Message */}
+              {result.analysis.error && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                  <p className="text-red-700 text-sm font-medium">Errore:</p>
+                  <p className="text-red-600 text-sm mt-1">{result.analysis.error}</p>
+                </div>
+              )}
+
+              {/* Result Content */}
+              {result.analysis.result && (
+                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 mb-4">
+                  <p className="text-gray-500 text-xs uppercase font-medium mb-2">Risultato</p>
+                  <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap">
+                    {result.analysis.result}
+                  </div>
+                </div>
+              )}
+
+              {/* Messages from Agent */}
+              {result.analysis.messages && result.analysis.messages.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-gray-500 text-xs uppercase font-medium">Messaggi</p>
+                  {result.analysis.messages.map((msg, idx) => (
+                    <div 
+                      key={idx} 
+                      className={`p-3 rounded-lg ${
+                        msg.role === 'assistant' 
+                          ? 'bg-blue-50 border border-blue-200' 
+                          : 'bg-gray-50 border border-gray-200'
+                      }`}
+                    >
+                      <p className="text-xs text-gray-500 mb-1 capitalize">{msg.role}</p>
+                      <p className="text-gray-700 text-sm whitespace-pre-wrap">{msg.content}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Raw JSON fallback */}
+              {!result.analysis.result && !result.analysis.error && result.analysis.messages?.length === 0 && (
+                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                  <pre className="whitespace-pre-wrap text-gray-700 text-sm leading-relaxed font-mono text-xs">
+                    {JSON.stringify(result.analysis, null, 2)}
+                  </pre>
+                </div>
+              )}
             </div>
           </div>
         )}
