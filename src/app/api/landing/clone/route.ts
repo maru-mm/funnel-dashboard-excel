@@ -1,125 +1,102 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-export async function POST(request: NextRequest) {
-  try {
-    const { url, targetProduct, adaptationStyle } = await request.json();
+// URL del servizio di clonazione - configurabile via env
+const CLONER_API_URL = process.env.CLONER_API_URL || 'http://localhost:8080';
 
-    if (!url) {
-      return NextResponse.json(
-        { error: 'URL è richiesto' },
-        { status: 400 }
-      );
-    }
-
-    // Chiama l'API di clonazione
-    const cloneUrl = `https://claude-code-agents.fly.dev/api/landing/clone?url=${encodeURIComponent(url)}`;
-    
-    const response = await fetch(cloneUrl, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json,text/html',
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return NextResponse.json(
-        { error: `Errore durante la clonazione: ${response.status} - ${errorText}` },
-        { status: response.status }
-      );
-    }
-
-    const responseText = await response.text();
-    
-    // Prova a parsare come JSON (l'API restituisce {url, html})
-    try {
-      const jsonData = JSON.parse(responseText);
-      
-      // Se contiene html, lo estrae
-      if (jsonData.html) {
-        return NextResponse.json({
-          success: true,
-          url: jsonData.url || url,
-          type: 'html',
-          html: jsonData.html,
-          targetProduct,
-          adaptationStyle,
-        });
-      }
-      
-      // Altrimenti restituisce tutto il JSON
-      return NextResponse.json({
-        success: true,
-        url,
-        type: 'json',
-        data: jsonData,
-      });
-    } catch {
-      // Se non è JSON, è HTML diretto
-      return NextResponse.json({
-        success: true,
-        url,
-        type: 'html',
-        html: responseText,
-        targetProduct,
-        adaptationStyle,
-      });
-    }
-  } catch (error) {
-    console.error('Errore durante la clonazione:', error);
-    return NextResponse.json(
-      { error: 'Errore durante la clonazione della pagina' },
-      { status: 500 }
-    );
-  }
+export interface CloneRequest {
+  url: string;
+  wait_for_js?: boolean;
+  remove_scripts?: boolean;
 }
 
-// Endpoint per swipe/adattamento
-export async function PUT(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { source_url, target_product, adaptation_style } = body;
+export interface CloneResponse {
+  url: string;
+  method_used: string;
+  content_length: number;
+  title: string;
+  duration_seconds: number;
+  html: string;
+  success: boolean;
+  error?: string;
+}
 
-    if (!source_url) {
+export async function POST(request: NextRequest) {
+  try {
+    const body: CloneRequest = await request.json();
+
+    if (!body.url) {
       return NextResponse.json(
-        { error: 'source_url è richiesto' },
+        { success: false, error: 'URL is required' },
         { status: 400 }
       );
     }
 
-    // Chiama l'API di swipe
-    const response = await fetch(
-      'https://claude-code-agents.fly.dev/api/funnel/swipe',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          source_url,
-          target_product,
-          adaptation_style,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
+    // Validazione URL
+    try {
+      new URL(body.url);
+    } catch {
       return NextResponse.json(
-        { error: `Errore durante lo swipe: ${response.status}` },
-        { status: response.status }
+        { success: false, error: 'Invalid URL format' },
+        { status: 400 }
       );
     }
 
-    const result = await response.json();
+    // Chiamata al servizio di clonazione
+    const cloneResponse = await fetch(`${CLONER_API_URL}/api/landing/clone`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url: body.url,
+        wait_for_js: body.wait_for_js ?? false,
+        remove_scripts: body.remove_scripts ?? true,
+      }),
+    });
+
+    if (!cloneResponse.ok) {
+      const errorText = await cloneResponse.text();
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: `Cloner service error: ${cloneResponse.status} - ${errorText}` 
+        },
+        { status: cloneResponse.status }
+      );
+    }
+
+    const data: CloneResponse = await cloneResponse.json();
+
     return NextResponse.json({
       success: true,
-      ...result,
+      url: data.url,
+      method_used: data.method_used,
+      content_length: data.content_length,
+      title: data.title,
+      duration_seconds: data.duration_seconds,
+      html: data.html,
+      html_preview: data.html?.substring(0, 500) + '...',
     });
+
   } catch (error) {
-    console.error('Errore durante lo swipe:', error);
+    console.error('Clone API error:', error);
+    
+    // Gestione errore connessione al servizio
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Impossibile connettersi al servizio di clonazione. Assicurati che sia in esecuzione su localhost:8080' 
+        },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json(
-      { error: 'Errore durante lo swipe della pagina' },
+      { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      },
       { status: 500 }
     );
   }

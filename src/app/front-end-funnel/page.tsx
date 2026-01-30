@@ -20,6 +20,8 @@ import {
   XCircle,
   Search,
   FileText,
+  Eye,
+  Code,
 } from 'lucide-react';
 
 export default function FrontEndFunnel() {
@@ -40,6 +42,13 @@ export default function FrontEndFunnel() {
     result: string | null;
     extractedData: { headline: string; subheadline: string; cta: string[]; price: string | null; benefits: string[] } | null;
   }>({ isOpen: false, pageId: '', result: null, extractedData: null });
+
+  const [htmlPreviewModal, setHtmlPreviewModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    html: string;
+    metadata: { method: string; length: number; duration: number } | null;
+  }>({ isOpen: false, title: '', html: '', metadata: null });
 
   const handleAddPage = () => {
     addFunnelPage({
@@ -295,6 +304,24 @@ export default function FrontEndFunnel() {
                           <span className="text-sm truncate">
                             {page.swipeResult || '-'}
                           </span>
+                          {page.clonedData && (
+                            <button
+                              onClick={() => setHtmlPreviewModal({
+                                isOpen: true,
+                                title: page.clonedData!.title || page.name,
+                                html: page.clonedData!.html,
+                                metadata: {
+                                  method: page.clonedData!.method_used,
+                                  length: page.clonedData!.content_length,
+                                  duration: page.clonedData!.duration_seconds,
+                                },
+                              })}
+                              className="p-1 text-blue-500 hover:bg-blue-50 rounded"
+                              title="Visualizza HTML clonato"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
 
@@ -427,6 +454,92 @@ export default function FrontEndFunnel() {
           </div>
         </div>
       </div>
+
+      {/* HTML Preview Modal */}
+      {htmlPreviewModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-blue-600 to-cyan-600">
+              <div className="flex items-center gap-3">
+                <Code className="w-6 h-6 text-white" />
+                <div>
+                  <h2 className="text-xl font-bold text-white">
+                    {htmlPreviewModal.title}
+                  </h2>
+                  {htmlPreviewModal.metadata && (
+                    <p className="text-white/80 text-sm">
+                      Metodo: {htmlPreviewModal.metadata.method} | 
+                      {htmlPreviewModal.metadata.length.toLocaleString()} chars | 
+                      {htmlPreviewModal.metadata.duration.toFixed(2)}s
+                    </p>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setHtmlPreviewModal({ isOpen: false, title: '', html: '', metadata: null })}
+                className="text-white/80 hover:text-white text-2xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Modal Body - Tabs */}
+            <div className="flex-1 overflow-hidden flex flex-col">
+              <div className="flex border-b border-gray-200">
+                <button
+                  className="px-4 py-2 text-sm font-medium text-blue-600 border-b-2 border-blue-600"
+                >
+                  Preview
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(htmlPreviewModal.html);
+                    alert('HTML copiato negli appunti!');
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+                >
+                  Copia HTML
+                </button>
+              </div>
+              
+              {/* Preview iframe */}
+              <div className="flex-1 overflow-hidden bg-gray-100 p-2">
+                <iframe
+                  srcDoc={htmlPreviewModal.html}
+                  className="w-full h-full bg-white rounded border border-gray-300"
+                  sandbox="allow-same-origin"
+                  title="HTML Preview"
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  const blob = new Blob([htmlPreviewModal.html], { type: 'text/html' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${htmlPreviewModal.title.replace(/[^a-z0-9]/gi, '_')}.html`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Scarica HTML
+              </button>
+              <button
+                onClick={() => setHtmlPreviewModal({ isOpen: false, title: '', html: '', metadata: null })}
+                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Chiudi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Analysis Modal */}
       {analysisModal.isOpen && (

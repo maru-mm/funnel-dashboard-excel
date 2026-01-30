@@ -126,6 +126,9 @@ export const useStore = create<Store>()(
         })),
 
       launchSwipe: async (id) => {
+        const page = get().funnelPages.find((p) => p.id === id);
+        if (!page || !page.urlToSwipe) return;
+
         set((state) => ({
           funnelPages: state.funnelPages.map((p) =>
             p.id === id
@@ -134,24 +137,70 @@ export const useStore = create<Store>()(
           ),
         }));
 
-        // Simulate swipe process
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+          const response = await fetch('/api/landing/clone', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: page.urlToSwipe,
+              wait_for_js: false,
+              remove_scripts: true,
+            }),
+          });
 
-        const success = Math.random() > 0.2;
-        set((state) => ({
-          funnelPages: state.funnelPages.map((p) =>
-            p.id === id
-              ? {
-                  ...p,
-                  swipeStatus: success ? 'completed' : 'failed',
-                  swipeResult: success
-                    ? 'Swipe completato con successo! Contenuto estratto e salvato.'
-                    : 'Errore durante lo swipe. Riprova.',
-                  updatedAt: new Date(),
-                }
-              : p
-          ),
-        }));
+          const data = await response.json();
+
+          if (!response.ok || !data.success) {
+            set((state) => ({
+              funnelPages: state.funnelPages.map((p) =>
+                p.id === id
+                  ? {
+                      ...p,
+                      swipeStatus: 'failed' as const,
+                      swipeResult: data.error || 'Errore durante la clonazione',
+                      updatedAt: new Date(),
+                    }
+                  : p
+              ),
+            }));
+            return;
+          }
+
+          // Successo - salva i dati clonati
+          set((state) => ({
+            funnelPages: state.funnelPages.map((p) =>
+              p.id === id
+                ? {
+                    ...p,
+                    swipeStatus: 'completed' as const,
+                    swipeResult: `✓ Clonato: ${data.title || 'Pagina'} (${data.content_length} chars, ${data.duration_seconds?.toFixed(2)}s)`,
+                    clonedData: {
+                      html: data.html,
+                      title: data.title,
+                      method_used: data.method_used,
+                      content_length: data.content_length,
+                      duration_seconds: data.duration_seconds,
+                      cloned_at: new Date(),
+                    },
+                    updatedAt: new Date(),
+                  }
+                : p
+            ),
+          }));
+        } catch (error) {
+          set((state) => ({
+            funnelPages: state.funnelPages.map((p) =>
+              p.id === id
+                ? {
+                    ...p,
+                    swipeStatus: 'failed' as const,
+                    swipeResult: error instanceof Error ? error.message : 'Errore di rete',
+                    updatedAt: new Date(),
+                  }
+                : p
+            ),
+          }));
+        }
       },
 
       // Post Purchase Pages
@@ -204,6 +253,9 @@ export const useStore = create<Store>()(
         })),
 
       launchPostPurchaseSwipe: async (id) => {
+        const page = get().postPurchasePages.find((p) => p.id === id);
+        if (!page || !page.urlToSwipe) return;
+
         set((state) => ({
           postPurchasePages: state.postPurchasePages.map((p) =>
             p.id === id
@@ -212,23 +264,69 @@ export const useStore = create<Store>()(
           ),
         }));
 
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+          const response = await fetch('/api/landing/clone', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url: page.urlToSwipe,
+              wait_for_js: false,
+              remove_scripts: true,
+            }),
+          });
 
-        const success = Math.random() > 0.2;
-        set((state) => ({
-          postPurchasePages: state.postPurchasePages.map((p) =>
-            p.id === id
-              ? {
-                  ...p,
-                  swipeStatus: success ? 'completed' : 'failed',
-                  swipeResult: success
-                    ? 'Swipe completato con successo!'
-                    : 'Errore durante lo swipe.',
-                  updatedAt: new Date(),
-                }
-              : p
-          ),
-        }));
+          const data = await response.json();
+
+          if (!response.ok || !data.success) {
+            set((state) => ({
+              postPurchasePages: state.postPurchasePages.map((p) =>
+                p.id === id
+                  ? {
+                      ...p,
+                      swipeStatus: 'failed' as const,
+                      swipeResult: data.error || 'Errore durante la clonazione',
+                      updatedAt: new Date(),
+                    }
+                  : p
+              ),
+            }));
+            return;
+          }
+
+          set((state) => ({
+            postPurchasePages: state.postPurchasePages.map((p) =>
+              p.id === id
+                ? {
+                    ...p,
+                    swipeStatus: 'completed' as const,
+                    swipeResult: `✓ Clonato: ${data.title || 'Pagina'} (${data.content_length} chars)`,
+                    clonedData: {
+                      html: data.html,
+                      title: data.title,
+                      method_used: data.method_used,
+                      content_length: data.content_length,
+                      duration_seconds: data.duration_seconds,
+                      cloned_at: new Date(),
+                    },
+                    updatedAt: new Date(),
+                  }
+                : p
+            ),
+          }));
+        } catch (error) {
+          set((state) => ({
+            postPurchasePages: state.postPurchasePages.map((p) =>
+              p.id === id
+                ? {
+                    ...p,
+                    swipeStatus: 'failed' as const,
+                    swipeResult: error instanceof Error ? error.message : 'Errore di rete',
+                    updatedAt: new Date(),
+                  }
+                : p
+            ),
+          }));
+        }
       },
     }),
     {

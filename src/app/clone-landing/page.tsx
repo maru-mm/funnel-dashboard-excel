@@ -15,18 +15,57 @@ import {
   Sparkles,
   AlertCircle,
   CheckCircle,
+  Wand2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
+
+interface ProductInfo {
+  name: string;
+  description: string;
+  benefits: string[];
+  target_audience: string;
+  price: string;
+  cta_text: string;
+  cta_url: string;
+  brand_name: string;
+  social_proof: string;
+}
+
+const defaultProduct: ProductInfo = {
+  name: '',
+  description: '',
+  benefits: ['', '', ''],
+  target_audience: '',
+  price: '',
+  cta_text: 'Inizia Ora',
+  cta_url: '',
+  brand_name: '',
+  social_proof: '',
+};
 
 export default function CloneLandingPage() {
   const [url, setUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSwiping, setIsSwiping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
     html: string;
     url: string;
+    isSwipedVersion?: boolean;
+    swipeInfo?: {
+      originalTitle?: string;
+      newTitle?: string;
+      changesMade?: string[];
+      processingTime?: number;
+    };
   } | null>(null);
   const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showSwipeForm, setShowSwipeForm] = useState(false);
+  const [product, setProduct] = useState<ProductInfo>(defaultProduct);
+  const [tone, setTone] = useState<'professional' | 'friendly' | 'urgent' | 'luxury'>('professional');
+  const [language, setLanguage] = useState<'it' | 'en'>('it');
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const handleClone = async () => {
@@ -63,9 +102,10 @@ export default function CloneLandingPage() {
         setResult({
           html: data.html,
           url: data.url,
+          isSwipedVersion: false,
         });
+        setShowSwipeForm(true);
       } else if (data.data) {
-        // Se riceve JSON invece di HTML
         setResult({
           html: `<pre style="padding: 20px; font-family: monospace;">${JSON.stringify(data.data, null, 2)}</pre>`,
           url: data.url,
@@ -80,14 +120,73 @@ export default function CloneLandingPage() {
     }
   };
 
+  const handleSwipe = async () => {
+    if (!result?.url) return;
+    
+    // Validate required fields
+    if (!product.name.trim()) {
+      setError('Inserisci il nome del prodotto');
+      return;
+    }
+
+    setIsSwiping(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/landing/swipe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_url: result.url,
+          product: {
+            ...product,
+            benefits: product.benefits.filter(b => b.trim()),
+          },
+          tone,
+          language,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Errore durante lo swipe');
+      }
+
+      if (data.html) {
+        setResult({
+          html: data.html,
+          url: result.url,
+          isSwipedVersion: true,
+          swipeInfo: {
+            originalTitle: data.original_title,
+            newTitle: data.new_title,
+            changesMade: data.changes_made,
+            processingTime: data.processing_time_seconds,
+          },
+        });
+        setShowSwipeForm(false);
+      } else {
+        throw new Error(data.error || 'Nessun HTML ricevuto');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Errore sconosciuto');
+    } finally {
+      setIsSwiping(false);
+    }
+  };
+
   const handleDownload = () => {
     if (!result?.html) return;
+    const filename = result.isSwipedVersion 
+      ? `swiped-landing-${product.brand_name || 'custom'}-${Date.now()}.html`
+      : `cloned-landing-${Date.now()}.html`;
     
     const blob = new Blob([result.html], { type: 'text/html' });
     const downloadUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = downloadUrl;
-    a.download = `cloned-landing-${Date.now()}.html`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -97,6 +196,12 @@ export default function CloneLandingPage() {
   const handleCopyCode = () => {
     if (!result?.html) return;
     navigator.clipboard.writeText(result.html);
+  };
+
+  const updateBenefit = (index: number, value: string) => {
+    const newBenefits = [...product.benefits];
+    newBenefits[index] = value;
+    setProduct({ ...product, benefits: newBenefits });
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -109,8 +214,8 @@ export default function CloneLandingPage() {
     <div className={`min-h-screen ${isFullscreen ? 'fixed inset-0 z-50 bg-white' : ''}`}>
       {!isFullscreen && (
         <Header
-          title="Clone Landing Page"
-          subtitle="Clona e visualizza landing page da qualsiasi URL"
+          title="Clone & Swipe Landing"
+          subtitle="Clona landing page e adattale al tuo prodotto"
         />
       )}
 
@@ -125,14 +230,14 @@ export default function CloneLandingPage() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 onKeyPress={handleKeyPress}
-                disabled={isLoading}
+                disabled={isLoading || isSwiping}
                 className="w-full px-4 py-3 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 disabled:bg-gray-100"
               />
               <ExternalLink className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
             </div>
             <button
               onClick={handleClone}
-              disabled={isLoading || !url.trim()}
+              disabled={isLoading || isSwiping || !url.trim()}
               className="px-6 py-3 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
             >
               {isLoading ? (
@@ -143,7 +248,7 @@ export default function CloneLandingPage() {
               ) : (
                 <>
                   <Copy className="w-5 h-5" />
-                  Clona Pagina
+                  Clona
                 </>
               )}
             </button>
@@ -176,32 +281,267 @@ export default function CloneLandingPage() {
         )}
 
         {/* Loading State */}
-        {isLoading && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+        {(isLoading || isSwiping) && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center mb-6">
             <Loader2 className="w-12 h-12 text-purple-600 animate-spin mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900">Clonazione in corso...</h3>
-            <p className="text-gray-500 mt-2">Sto scaricando e processando la pagina</p>
+            <h3 className="text-lg font-semibold text-gray-900">
+              {isSwiping ? 'Swipe in corso...' : 'Clonazione in corso...'}
+            </h3>
+            <p className="text-gray-500 mt-2">
+              {isSwiping ? 'Sto adattando la landing al tuo prodotto' : 'Sto scaricando e processando la pagina'}
+            </p>
+          </div>
+        )}
+
+        {/* Swipe Form Panel */}
+        {result && !isLoading && !isSwiping && (
+          <div className={`bg-gradient-to-r from-orange-50 to-yellow-50 border border-orange-200 rounded-xl mb-6 overflow-hidden ${isFullscreen ? 'mx-4' : ''}`}>
+            <button
+              onClick={() => setShowSwipeForm(!showSwipeForm)}
+              className="w-full px-6 py-4 flex items-center justify-between hover:bg-orange-100/50 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="bg-orange-100 p-2 rounded-lg">
+                  <Wand2 className="w-5 h-5 text-orange-600" />
+                </div>
+                <div className="text-left">
+                  <h3 className="font-semibold text-orange-900">
+                    {result.isSwipedVersion ? 'Landing Swipata!' : 'Swipa per il tuo Prodotto'}
+                  </h3>
+                  <p className="text-sm text-orange-700">
+                    {result.isSwipedVersion 
+                      ? 'Clicca per modificare i dati e riswipare'
+                      : 'Inserisci i dati del tuo prodotto per adattare la landing'}
+                  </p>
+                </div>
+              </div>
+              {showSwipeForm ? (
+                <ChevronUp className="w-5 h-5 text-orange-600" />
+              ) : (
+                <ChevronDown className="w-5 h-5 text-orange-600" />
+              )}
+            </button>
+
+            {showSwipeForm && (
+              <div className="px-6 pb-6 border-t border-orange-200">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                  {/* Left Column */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Nome Prodotto *
+                      </label>
+                      <input
+                        type="text"
+                        value={product.name}
+                        onChange={(e) => setProduct({ ...product, name: e.target.value })}
+                        placeholder="Es: PayFlow Italia"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Brand Name
+                      </label>
+                      <input
+                        type="text"
+                        value={product.brand_name}
+                        onChange={(e) => setProduct({ ...product, brand_name: e.target.value })}
+                        placeholder="Es: PayFlow"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Descrizione
+                      </label>
+                      <textarea
+                        value={product.description}
+                        onChange={(e) => setProduct({ ...product, description: e.target.value })}
+                        placeholder="Descrivi il tuo prodotto..."
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Target Audience
+                      </label>
+                      <input
+                        type="text"
+                        value={product.target_audience}
+                        onChange={(e) => setProduct({ ...product, target_audience: e.target.value })}
+                        placeholder="Es: Piccoli e-commerce italiani"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Right Column */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Benefici (uno per riga)
+                      </label>
+                      {product.benefits.map((benefit, index) => (
+                        <input
+                          key={index}
+                          type="text"
+                          value={benefit}
+                          onChange={(e) => updateBenefit(index, e.target.value)}
+                          placeholder={`Beneficio ${index + 1}`}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 mb-2"
+                        />
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Prezzo
+                        </label>
+                        <input
+                          type="text"
+                          value={product.price}
+                          onChange={(e) => setProduct({ ...product, price: e.target.value })}
+                          placeholder="Es: €29/mese"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          CTA Text
+                        </label>
+                        <input
+                          type="text"
+                          value={product.cta_text}
+                          onChange={(e) => setProduct({ ...product, cta_text: e.target.value })}
+                          placeholder="Inizia Gratis"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        CTA URL
+                      </label>
+                      <input
+                        type="url"
+                        value={product.cta_url}
+                        onChange={(e) => setProduct({ ...product, cta_url: e.target.value })}
+                        placeholder="https://tuosito.com/signup"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Social Proof
+                      </label>
+                      <input
+                        type="text"
+                        value={product.social_proof}
+                        onChange={(e) => setProduct({ ...product, social_proof: e.target.value })}
+                        placeholder="Es: Usato da 5,000+ aziende"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Tono
+                        </label>
+                        <select
+                          value={tone}
+                          onChange={(e) => setTone(e.target.value as typeof tone)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        >
+                          <option value="professional">Professionale</option>
+                          <option value="friendly">Amichevole</option>
+                          <option value="urgent">Urgente</option>
+                          <option value="luxury">Luxury</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Lingua
+                        </label>
+                        <select
+                          value={language}
+                          onChange={(e) => setLanguage(e.target.value as typeof language)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                        >
+                          <option value="it">Italiano</option>
+                          <option value="en">English</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleSwipe}
+                  disabled={isSwiping || !product.name.trim()}
+                  className="mt-6 w-full px-6 py-3 bg-gradient-to-r from-orange-500 to-yellow-500 text-white rounded-lg font-medium hover:from-orange-600 hover:to-yellow-600 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
+                >
+                  {isSwiping ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Swipando...
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-5 h-5" />
+                      Swipa Landing
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Swipe Info Banner */}
+        {result?.isSwipedVersion && result.swipeInfo && (
+          <div className={`bg-green-50 border border-green-200 rounded-xl p-4 mb-6 ${isFullscreen ? 'mx-4' : ''}`}>
+            <div className="flex items-start gap-3">
+              <CheckCircle className="w-5 h-5 text-green-600 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-medium text-green-900">Landing Swipata con Successo!</h3>
+                {result.swipeInfo.processingTime && (
+                  <p className="text-sm text-green-700 mt-1">
+                    Tempo di elaborazione: {result.swipeInfo.processingTime.toFixed(2)}s
+                  </p>
+                )}
+                {result.swipeInfo.changesMade && result.swipeInfo.changesMade.length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-sm font-medium text-green-800">Modifiche effettuate:</p>
+                    <ul className="text-sm text-green-700 mt-1 space-y-1">
+                      {result.swipeInfo.changesMade.slice(0, 5).map((change, i) => (
+                        <li key={i}>• {change}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
         {/* Result Viewer */}
-        {result && !isLoading && (
+        {result && !isLoading && !isSwiping && (
           <div className={`bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden ${isFullscreen ? 'flex-1 mx-4 mb-4 flex flex-col' : ''}`}>
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
               <div className="flex items-center gap-3">
-                <CheckCircle className="w-5 h-5 text-green-600" />
+                <CheckCircle className={`w-5 h-5 ${result.isSwipedVersion ? 'text-orange-600' : 'text-green-600'}`} />
                 <div>
-                  <span className="font-medium text-gray-900">Pagina Clonata</span>
-                  <a
-                    href={result.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ml-2 text-sm text-purple-600 hover:underline inline-flex items-center gap-1"
-                  >
-                    {result.url}
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
+                  <span className="font-medium text-gray-900">
+                    {result.isSwipedVersion ? 'Landing Swipata' : 'Pagina Clonata'}
+                  </span>
+                  {result.isSwipedVersion && product.brand_name && (
+                    <span className="ml-2 px-2 py-0.5 bg-orange-100 text-orange-800 text-xs rounded-full">
+                      {product.brand_name}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -260,7 +600,7 @@ export default function CloneLandingPage() {
                 <button
                   onClick={handleClone}
                   className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors"
-                  title="Ricarica"
+                  title="Ricarica originale"
                 >
                   <RefreshCw className="w-4 h-4" />
                 </button>
@@ -274,7 +614,7 @@ export default function CloneLandingPage() {
                   ref={iframeRef}
                   srcDoc={result.html}
                   className="w-full h-full border-0"
-                  title="Cloned Landing Page Preview"
+                  title="Landing Page Preview"
                   sandbox="allow-scripts allow-same-origin"
                 />
               ) : (
@@ -290,59 +630,41 @@ export default function CloneLandingPage() {
 
         {/* Instructions */}
         {!result && !isLoading && !error && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-purple-50 border border-purple-200 rounded-xl p-6">
               <div className="flex items-center gap-3 mb-4">
                 <div className="bg-purple-100 p-2 rounded-lg">
                   <Copy className="w-5 h-5 text-purple-600" />
                 </div>
-                <h3 className="font-semibold text-purple-900">Come funziona</h3>
+                <h3 className="font-semibold text-purple-900">1. Clona</h3>
               </div>
-              <ol className="space-y-2 text-purple-800 text-sm">
-                <li className="flex items-start gap-2">
-                  <span className="bg-purple-200 text-purple-900 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">1</span>
-                  <span>Inserisci l&apos;URL della landing page da clonare</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="bg-purple-200 text-purple-900 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">2</span>
-                  <span>Clicca &quot;Clona Pagina&quot; per scaricare l&apos;HTML</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="bg-purple-200 text-purple-900 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">3</span>
-                  <span>Visualizza il risultato in anteprima o codice</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="bg-purple-200 text-purple-900 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">4</span>
-                  <span>Scarica o copia il codice HTML</span>
-                </li>
-              </ol>
+              <p className="text-purple-800 text-sm">
+                Inserisci l&apos;URL di una landing page di successo e clicca &quot;Clona&quot; per scaricarla.
+              </p>
             </div>
 
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-6">
               <div className="flex items-center gap-3 mb-4">
-                <div className="bg-blue-100 p-2 rounded-lg">
-                  <Sparkles className="w-5 h-5 text-blue-600" />
+                <div className="bg-orange-100 p-2 rounded-lg">
+                  <Wand2 className="w-5 h-5 text-orange-600" />
                 </div>
-                <h3 className="font-semibold text-blue-900">Funzionalità</h3>
+                <h3 className="font-semibold text-orange-900">2. Swipa</h3>
               </div>
-              <ul className="space-y-2 text-blue-800 text-sm">
-                <li className="flex items-center gap-2">
-                  <Eye className="w-4 h-4" />
-                  <span>Preview live della pagina clonata</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <Code className="w-4 h-4" />
-                  <span>Visualizzazione codice HTML completo</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <Download className="w-4 h-4" />
-                  <span>Download file HTML</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <Maximize2 className="w-4 h-4" />
-                  <span>Modalità fullscreen per preview</span>
-                </li>
-              </ul>
+              <p className="text-orange-800 text-sm">
+                Inserisci i dati del tuo prodotto e l&apos;AI adatterà la landing per te automaticamente.
+              </p>
+            </div>
+
+            <div className="bg-green-50 border border-green-200 rounded-xl p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="bg-green-100 p-2 rounded-lg">
+                  <Download className="w-5 h-5 text-green-600" />
+                </div>
+                <h3 className="font-semibold text-green-900">3. Usa</h3>
+              </div>
+              <p className="text-green-800 text-sm">
+                Visualizza il risultato in anteprima, scarica l&apos;HTML e usalo per il tuo business.
+              </p>
             </div>
           </div>
         )}

@@ -37,6 +37,15 @@ export interface FunnelAnalysis {
   benefits: string[];
 }
 
+export interface ClonedPageData {
+  html: string;
+  title: string;
+  method_used: string;
+  content_length: number;
+  duration_seconds: number;
+  cloned_at: Date;
+}
+
 export interface FunnelPage {
   id: string;
   name: string;
@@ -46,6 +55,7 @@ export interface FunnelPage {
   urlToSwipe: string;
   swipeStatus: SwipeStatus;
   swipeResult?: string;
+  clonedData?: ClonedPageData;
   analysisStatus?: SwipeStatus;
   analysisResult?: string;
   extractedData?: FunnelAnalysis;
@@ -61,6 +71,7 @@ export interface PostPurchasePage {
   urlToSwipe: string;
   swipeStatus: SwipeStatus;
   swipeResult?: string;
+  clonedData?: ClonedPageData;
   createdAt: Date;
   updatedAt: Date;
 }
