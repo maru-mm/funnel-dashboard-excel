@@ -9,7 +9,8 @@ import {
   CreditCard,
   ChevronRight,
   Sparkles,
-  Copy
+  Copy,
+  FileCode
 } from 'lucide-react';
 
 const menuItems = [
@@ -37,6 +38,11 @@ const menuItems = [
     name: 'Post Purchase Funnel',
     href: '/post-purchase',
     icon: CreditCard,
+  },
+  {
+    name: 'My Templates',
+    href: '/templates',
+    icon: FileCode,
   },
   {
     name: 'My Products',

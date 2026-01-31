@@ -1,400 +1,638 @@
 'use client';
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { Product, FunnelPage, PostPurchasePage, SwipeApiResponse } from '@/types';
+import { SwipeApiResponse } from '@/types';
+import type {
+  Product,
+  SwipeTemplate,
+  FunnelPage,
+  PostPurchasePage,
+  PageType,
+  SwipeStatus,
+  PostPurchaseType,
+} from '@/types/database';
+import * as supabaseOps from '@/lib/supabase-operations';
 
 const SWIPE_API_URL = 'https://claude-code-agents.fly.dev/api/landing/swipe';
 
+// Helper to convert database types to app types
+interface AppProduct {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  imageUrl?: string;
+  benefits: string[];
+  ctaText: string;
+  ctaUrl: string;
+  brandName: string;
+  createdAt: Date;
+}
+
+type ViewFormat = 'desktop' | 'mobile';
+
+interface AppSwipeTemplate {
+  id: string;
+  name: string;
+  sourceUrl: string;
+  pageType: PageType;
+  viewFormat: ViewFormat;
+  tags: string[];
+  description?: string;
+  previewImage?: string;
+  createdAt: Date;
+}
+
+interface AppFunnelPage {
+  id: string;
+  name: string;
+  pageType: PageType;
+  templateId?: string;
+  productId: string;
+  urlToSwipe: string;
+  swipeStatus: SwipeStatus;
+  swipeResult?: string;
+  clonedData?: {
+    html: string;
+    title: string;
+    method_used: string;
+    content_length: number;
+    duration_seconds: number;
+    cloned_at: Date;
+  };
+  swipedData?: {
+    html: string;
+    originalTitle: string;
+    newTitle: string;
+    originalLength: number;
+    newLength: number;
+    processingTime: number;
+    methodUsed: string;
+    changesMade: string[];
+    swipedAt: Date;
+  };
+  analysisStatus?: SwipeStatus;
+  analysisResult?: string;
+  extractedData?: {
+    headline: string;
+    subheadline: string;
+    cta: string[];
+    price: string | null;
+    benefits: string[];
+  };
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface AppPostPurchasePage {
+  id: string;
+  name: string;
+  type: PostPurchaseType;
+  productId: string;
+  urlToSwipe: string;
+  swipeStatus: SwipeStatus;
+  swipeResult?: string;
+  clonedData?: {
+    html: string;
+    title: string;
+    method_used: string;
+    content_length: number;
+    duration_seconds: number;
+    cloned_at: Date;
+  };
+  swipedData?: {
+    html: string;
+    originalTitle: string;
+    newTitle: string;
+    originalLength: number;
+    newLength: number;
+    processingTime: number;
+    methodUsed: string;
+    changesMade: string[];
+    swipedAt: Date;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Conversion functions
+function dbProductToApp(p: Product): AppProduct {
+  return {
+    id: p.id,
+    name: p.name,
+    description: p.description,
+    price: p.price,
+    imageUrl: p.image_url || undefined,
+    benefits: p.benefits,
+    ctaText: p.cta_text,
+    ctaUrl: p.cta_url,
+    brandName: p.brand_name,
+    createdAt: new Date(p.created_at),
+  };
+}
+
+function dbTemplateToApp(t: SwipeTemplate): AppSwipeTemplate {
+  return {
+    id: t.id,
+    name: t.name,
+    sourceUrl: t.source_url,
+    pageType: t.page_type,
+    viewFormat: (t.view_format as ViewFormat) || 'desktop',
+    tags: t.tags,
+    description: t.description || undefined,
+    previewImage: t.preview_image || undefined,
+    createdAt: new Date(t.created_at),
+  };
+}
+
+function dbFunnelPageToApp(p: FunnelPage): AppFunnelPage {
+  return {
+    id: p.id,
+    name: p.name,
+    pageType: p.page_type,
+    templateId: p.template_id || undefined,
+    productId: p.product_id,
+    urlToSwipe: p.url_to_swipe,
+    swipeStatus: p.swipe_status,
+    swipeResult: p.swipe_result || undefined,
+    clonedData: p.cloned_data as AppFunnelPage['clonedData'],
+    swipedData: p.swiped_data as AppFunnelPage['swipedData'],
+    analysisStatus: p.analysis_status || undefined,
+    analysisResult: p.analysis_result || undefined,
+    extractedData: p.extracted_data as AppFunnelPage['extractedData'],
+    createdAt: new Date(p.created_at),
+    updatedAt: new Date(p.updated_at),
+  };
+}
+
+function dbPostPurchaseToApp(p: PostPurchasePage): AppPostPurchasePage {
+  return {
+    id: p.id,
+    name: p.name,
+    type: p.type,
+    productId: p.product_id,
+    urlToSwipe: p.url_to_swipe,
+    swipeStatus: p.swipe_status,
+    swipeResult: p.swipe_result || undefined,
+    clonedData: p.cloned_data as AppPostPurchasePage['clonedData'],
+    swipedData: p.swiped_data as AppPostPurchasePage['swipedData'],
+    createdAt: new Date(p.created_at),
+    updatedAt: new Date(p.updated_at),
+  };
+}
+
 interface Store {
+  // Loading state
+  isLoading: boolean;
+  error: string | null;
+  isInitialized: boolean;
+
+  // Initialize data from Supabase
+  initializeData: () => Promise<void>;
+
+  // Templates
+  templates: AppSwipeTemplate[];
+  addTemplate: (template: Omit<AppSwipeTemplate, 'id' | 'createdAt'>) => Promise<void>;
+  updateTemplate: (id: string, template: Partial<AppSwipeTemplate>) => Promise<void>;
+  deleteTemplate: (id: string) => Promise<void>;
+
   // Products
-  products: Product[];
-  addProduct: (product: Omit<Product, 'id' | 'createdAt'>) => void;
-  updateProduct: (id: string, product: Partial<Product>) => void;
-  deleteProduct: (id: string) => void;
+  products: AppProduct[];
+  addProduct: (product: Omit<AppProduct, 'id' | 'createdAt'>) => Promise<void>;
+  updateProduct: (id: string, product: Partial<AppProduct>) => Promise<void>;
+  deleteProduct: (id: string) => Promise<void>;
 
   // Front End Funnel Pages
-  funnelPages: FunnelPage[];
-  addFunnelPage: (page: Omit<FunnelPage, 'id' | 'createdAt' | 'updatedAt'>) => void;
-  updateFunnelPage: (id: string, page: Partial<FunnelPage>) => void;
-  deleteFunnelPage: (id: string) => void;
+  funnelPages: AppFunnelPage[];
+  addFunnelPage: (page: Omit<AppFunnelPage, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  updateFunnelPage: (id: string, page: Partial<AppFunnelPage>) => Promise<void>;
+  deleteFunnelPage: (id: string) => Promise<void>;
   launchSwipe: (id: string) => Promise<void>;
 
   // Post Purchase Pages
-  postPurchasePages: PostPurchasePage[];
-  addPostPurchasePage: (page: Omit<PostPurchasePage, 'id' | 'createdAt' | 'updatedAt'>) => void;
-  updatePostPurchasePage: (id: string, page: Partial<PostPurchasePage>) => void;
-  deletePostPurchasePage: (id: string) => void;
+  postPurchasePages: AppPostPurchasePage[];
+  addPostPurchasePage: (page: Omit<AppPostPurchasePage, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  updatePostPurchasePage: (id: string, page: Partial<AppPostPurchasePage>) => Promise<void>;
+  deletePostPurchasePage: (id: string) => Promise<void>;
   launchPostPurchaseSwipe: (id: string) => Promise<void>;
 }
 
-const generateId = () => Math.random().toString(36).substring(2, 15);
+export const useStore = create<Store>()((set, get) => ({
+  // Loading state
+  isLoading: true,
+  error: null,
+  isInitialized: false,
 
-export const useStore = create<Store>()(
-  persist(
-    (set, get) => ({
-      // Products
-      products: [
-        {
-          id: '1',
-          name: 'Prodotto Demo 1',
-          description: 'Integratore naturale per il benessere quotidiano',
-          price: 47.00,
-          benefits: ['Aumenta l\'energia', 'Migliora il sonno', 'Supporta il sistema immunitario'],
-          ctaText: 'Acquista Ora',
-          ctaUrl: 'https://example.com/buy',
-          brandName: 'NaturalWell',
-          createdAt: new Date(),
-        },
-        {
-          id: '2',
-          name: 'Prodotto Demo 2',
-          description: 'Corso online per il successo personale',
-          price: 97.00,
-          benefits: ['Strategie comprovate', 'Accesso lifetime', 'Community esclusiva'],
-          ctaText: 'Iscriviti Subito',
-          ctaUrl: 'https://example.com/enroll',
-          brandName: 'SuccessAcademy',
-          createdAt: new Date(),
-        },
-      ],
+  // Initialize data from Supabase
+  initializeData: async () => {
+    if (get().isInitialized) return;
+    
+    set({ isLoading: true, error: null });
+    
+    try {
+      const [products, templates, funnelPages, postPurchasePages] = await Promise.all([
+        supabaseOps.fetchProducts(),
+        supabaseOps.fetchTemplates(),
+        supabaseOps.fetchFunnelPages(),
+        supabaseOps.fetchPostPurchasePages(),
+      ]);
 
-      addProduct: (product) =>
-        set((state) => ({
-          products: [
-            ...state.products,
-            {
-              ...product,
-              id: generateId(),
-              createdAt: new Date(),
-            },
-          ],
-        })),
-
-      updateProduct: (id, product) =>
-        set((state) => ({
-          products: state.products.map((p) =>
-            p.id === id ? { ...p, ...product } : p
-          ),
-        })),
-
-      deleteProduct: (id) =>
-        set((state) => ({
-          products: state.products.filter((p) => p.id !== id),
-        })),
-
-      // Front End Funnel Pages
-      funnelPages: [
-        {
-          id: '1',
-          name: 'Landing Page Principale',
-          pageType: 'landing',
-          template: 'advertorial',
-          productId: '1',
-          urlToSwipe: 'https://example.com/landing',
-          swipeStatus: 'pending',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        {
-          id: '2',
-          name: 'Quiz Funnel Entry',
-          pageType: 'quiz_funnel',
-          template: 'advertorial',
-          productId: '1',
-          urlToSwipe: 'https://example.com/quiz',
-          swipeStatus: 'completed',
-          swipeResult: 'Swipe completato con successo',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      ],
-
-      addFunnelPage: (page) =>
-        set((state) => ({
-          funnelPages: [
-            ...state.funnelPages,
-            {
-              ...page,
-              id: generateId(),
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            },
-          ],
-        })),
-
-      updateFunnelPage: (id, page) =>
-        set((state) => ({
-          funnelPages: state.funnelPages.map((p) =>
-            p.id === id ? { ...p, ...page, updatedAt: new Date() } : p
-          ),
-        })),
-
-      deleteFunnelPage: (id) =>
-        set((state) => ({
-          funnelPages: state.funnelPages.filter((p) => p.id !== id),
-        })),
-
-      launchSwipe: async (id) => {
-        const page = get().funnelPages.find((p) => p.id === id);
-        if (!page || !page.urlToSwipe) return;
-
-        const product = get().products.find((p) => p.id === page.productId);
-        if (!product) {
-          set((state) => ({
-            funnelPages: state.funnelPages.map((p) =>
-              p.id === id
-                ? {
-                    ...p,
-                    swipeStatus: 'failed' as const,
-                    swipeResult: 'Seleziona un prodotto prima di lanciare lo swipe',
-                    updatedAt: new Date(),
-                  }
-                : p
-            ),
-          }));
-          return;
-        }
-
-        set((state) => ({
-          funnelPages: state.funnelPages.map((p) =>
-            p.id === id
-              ? { ...p, swipeStatus: 'in_progress' as const, updatedAt: new Date() }
-              : p
-          ),
-        }));
-
-        try {
-          const response = await fetch(SWIPE_API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              source_url: page.urlToSwipe,
-              product: {
-                name: product.name,
-                description: product.description,
-                benefits: product.benefits,
-                cta_text: product.ctaText,
-                cta_url: product.ctaUrl,
-                brand_name: product.brandName,
-              },
-              language: 'it',
-            }),
-          });
-
-          const data: SwipeApiResponse = await response.json();
-
-          if (!response.ok || !data.success) {
-            set((state) => ({
-              funnelPages: state.funnelPages.map((p) =>
-                p.id === id
-                  ? {
-                      ...p,
-                      swipeStatus: 'failed' as const,
-                      swipeResult: data.error || 'Errore durante lo swipe',
-                      updatedAt: new Date(),
-                    }
-                  : p
-              ),
-            }));
-            return;
-          }
-
-          // Successo - salva i dati swipati
-          set((state) => ({
-            funnelPages: state.funnelPages.map((p) =>
-              p.id === id
-                ? {
-                    ...p,
-                    swipeStatus: 'completed' as const,
-                    swipeResult: `✓ Swipe completato: "${data.new_title}" (${data.new_length} chars, ${data.processing_time_seconds.toFixed(2)}s)`,
-                    swipedData: {
-                      html: data.html,
-                      originalTitle: data.original_title,
-                      newTitle: data.new_title,
-                      originalLength: data.original_length,
-                      newLength: data.new_length,
-                      processingTime: data.processing_time_seconds,
-                      methodUsed: data.method_used,
-                      changesMade: data.changes_made,
-                      swipedAt: new Date(),
-                    },
-                    updatedAt: new Date(),
-                  }
-                : p
-            ),
-          }));
-        } catch (error) {
-          set((state) => ({
-            funnelPages: state.funnelPages.map((p) =>
-              p.id === id
-                ? {
-                    ...p,
-                    swipeStatus: 'failed' as const,
-                    swipeResult: error instanceof Error ? error.message : 'Errore di rete',
-                    updatedAt: new Date(),
-                  }
-                : p
-            ),
-          }));
-        }
-      },
-
-      // Post Purchase Pages
-      postPurchasePages: [
-        {
-          id: '1',
-          name: 'Thank You Page',
-          type: 'thank_you',
-          productId: '1',
-          urlToSwipe: 'https://example.com/thank-you',
-          swipeStatus: 'pending',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        {
-          id: '2',
-          name: 'Upsell Principale',
-          type: 'upsell_1',
-          productId: '1',
-          urlToSwipe: 'https://example.com/upsell-1',
-          swipeStatus: 'pending',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-      ],
-
-      addPostPurchasePage: (page) =>
-        set((state) => ({
-          postPurchasePages: [
-            ...state.postPurchasePages,
-            {
-              ...page,
-              id: generateId(),
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            },
-          ],
-        })),
-
-      updatePostPurchasePage: (id, page) =>
-        set((state) => ({
-          postPurchasePages: state.postPurchasePages.map((p) =>
-            p.id === id ? { ...p, ...page, updatedAt: new Date() } : p
-          ),
-        })),
-
-      deletePostPurchasePage: (id) =>
-        set((state) => ({
-          postPurchasePages: state.postPurchasePages.filter((p) => p.id !== id),
-        })),
-
-      launchPostPurchaseSwipe: async (id) => {
-        const page = get().postPurchasePages.find((p) => p.id === id);
-        if (!page || !page.urlToSwipe) return;
-
-        const product = get().products.find((p) => p.id === page.productId);
-        if (!product) {
-          set((state) => ({
-            postPurchasePages: state.postPurchasePages.map((p) =>
-              p.id === id
-                ? {
-                    ...p,
-                    swipeStatus: 'failed' as const,
-                    swipeResult: 'Seleziona un prodotto prima di lanciare lo swipe',
-                    updatedAt: new Date(),
-                  }
-                : p
-            ),
-          }));
-          return;
-        }
-
-        set((state) => ({
-          postPurchasePages: state.postPurchasePages.map((p) =>
-            p.id === id
-              ? { ...p, swipeStatus: 'in_progress' as const, updatedAt: new Date() }
-              : p
-          ),
-        }));
-
-        try {
-          const response = await fetch(SWIPE_API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              source_url: page.urlToSwipe,
-              product: {
-                name: product.name,
-                description: product.description,
-                benefits: product.benefits,
-                cta_text: product.ctaText,
-                cta_url: product.ctaUrl,
-                brand_name: product.brandName,
-              },
-              language: 'it',
-            }),
-          });
-
-          const data: SwipeApiResponse = await response.json();
-
-          if (!response.ok || !data.success) {
-            set((state) => ({
-              postPurchasePages: state.postPurchasePages.map((p) =>
-                p.id === id
-                  ? {
-                      ...p,
-                      swipeStatus: 'failed' as const,
-                      swipeResult: data.error || 'Errore durante lo swipe',
-                      updatedAt: new Date(),
-                    }
-                  : p
-              ),
-            }));
-            return;
-          }
-
-          set((state) => ({
-            postPurchasePages: state.postPurchasePages.map((p) =>
-              p.id === id
-                ? {
-                    ...p,
-                    swipeStatus: 'completed' as const,
-                    swipeResult: `✓ Swipe completato: "${data.new_title}" (${data.new_length} chars)`,
-                    swipedData: {
-                      html: data.html,
-                      originalTitle: data.original_title,
-                      newTitle: data.new_title,
-                      originalLength: data.original_length,
-                      newLength: data.new_length,
-                      processingTime: data.processing_time_seconds,
-                      methodUsed: data.method_used,
-                      changesMade: data.changes_made,
-                      swipedAt: new Date(),
-                    },
-                    updatedAt: new Date(),
-                  }
-                : p
-            ),
-          }));
-        } catch (error) {
-          set((state) => ({
-            postPurchasePages: state.postPurchasePages.map((p) =>
-              p.id === id
-                ? {
-                    ...p,
-                    swipeStatus: 'failed' as const,
-                    swipeResult: error instanceof Error ? error.message : 'Errore di rete',
-                    updatedAt: new Date(),
-                  }
-                : p
-            ),
-          }));
-        }
-      },
-    }),
-    {
-      name: 'funnel-swiper-storage',
+      set({
+        products: products.map(dbProductToApp),
+        templates: templates.map(dbTemplateToApp),
+        funnelPages: funnelPages.map(dbFunnelPageToApp),
+        postPurchasePages: postPurchasePages.map(dbPostPurchaseToApp),
+        isLoading: false,
+        isInitialized: true,
+      });
+    } catch (error) {
+      console.error('Error initializing data from Supabase:', error);
+      set({ 
+        error: error instanceof Error ? error.message : 'Errore di connessione a Supabase',
+        isLoading: false,
+      });
     }
-  )
-);
+  },
+
+  // Templates
+  templates: [],
+
+  addTemplate: async (template) => {
+    try {
+      const created = await supabaseOps.createTemplate({
+        name: template.name,
+        source_url: template.sourceUrl,
+        page_type: template.pageType,
+        view_format: template.viewFormat || 'desktop',
+        tags: template.tags,
+        description: template.description,
+        preview_image: template.previewImage,
+      });
+      
+      set((state) => ({
+        templates: [dbTemplateToApp(created), ...state.templates],
+      }));
+    } catch (error) {
+      console.error('Error adding template:', error);
+      throw error;
+    }
+  },
+
+  updateTemplate: async (id, template) => {
+    try {
+      const updated = await supabaseOps.updateTemplate(id, {
+        name: template.name,
+        source_url: template.sourceUrl,
+        page_type: template.pageType,
+        view_format: template.viewFormat,
+        tags: template.tags,
+        description: template.description,
+        preview_image: template.previewImage,
+      });
+      
+      set((state) => ({
+        templates: state.templates.map((t) =>
+          t.id === id ? dbTemplateToApp(updated) : t
+        ),
+      }));
+    } catch (error) {
+      console.error('Error updating template:', error);
+      throw error;
+    }
+  },
+
+  deleteTemplate: async (id) => {
+    try {
+      await supabaseOps.deleteTemplate(id);
+      set((state) => ({
+        templates: state.templates.filter((t) => t.id !== id),
+      }));
+    } catch (error) {
+      console.error('Error deleting template:', error);
+      throw error;
+    }
+  },
+
+  // Products
+  products: [],
+
+  addProduct: async (product) => {
+    try {
+      const created = await supabaseOps.createProduct({
+        name: product.name,
+        description: product.description,
+        price: product.price,
+        image_url: product.imageUrl,
+        benefits: product.benefits,
+        cta_text: product.ctaText,
+        cta_url: product.ctaUrl,
+        brand_name: product.brandName,
+      });
+      
+      set((state) => ({
+        products: [dbProductToApp(created), ...state.products],
+      }));
+    } catch (error) {
+      console.error('Error adding product:', error);
+      throw error;
+    }
+  },
+
+  updateProduct: async (id, product) => {
+    try {
+      const updated = await supabaseOps.updateProduct(id, {
+        name: product.name,
+        description: product.description,
+        price: product.price,
+        image_url: product.imageUrl,
+        benefits: product.benefits,
+        cta_text: product.ctaText,
+        cta_url: product.ctaUrl,
+        brand_name: product.brandName,
+      });
+      
+      set((state) => ({
+        products: state.products.map((p) =>
+          p.id === id ? dbProductToApp(updated) : p
+        ),
+      }));
+    } catch (error) {
+      console.error('Error updating product:', error);
+      throw error;
+    }
+  },
+
+  deleteProduct: async (id) => {
+    try {
+      await supabaseOps.deleteProduct(id);
+      set((state) => ({
+        products: state.products.filter((p) => p.id !== id),
+      }));
+    } catch (error) {
+      console.error('Error deleting product:', error);
+      throw error;
+    }
+  },
+
+  // Front End Funnel Pages
+  funnelPages: [],
+
+  addFunnelPage: async (page) => {
+    try {
+      const created = await supabaseOps.createFunnelPage({
+        name: page.name,
+        page_type: page.pageType,
+        template_id: page.templateId,
+        product_id: page.productId,
+        url_to_swipe: page.urlToSwipe,
+        swipe_status: page.swipeStatus,
+        swipe_result: page.swipeResult,
+        cloned_data: page.clonedData as unknown as Record<string, unknown>,
+        swiped_data: page.swipedData as unknown as Record<string, unknown>,
+        analysis_status: page.analysisStatus,
+        analysis_result: page.analysisResult,
+        extracted_data: page.extractedData as unknown as Record<string, unknown>,
+      });
+      
+      set((state) => ({
+        funnelPages: [dbFunnelPageToApp(created), ...state.funnelPages],
+      }));
+    } catch (error) {
+      console.error('Error adding funnel page:', error);
+      throw error;
+    }
+  },
+
+  updateFunnelPage: async (id, page) => {
+    try {
+      const updated = await supabaseOps.updateFunnelPage(id, {
+        name: page.name,
+        page_type: page.pageType,
+        template_id: page.templateId,
+        product_id: page.productId,
+        url_to_swipe: page.urlToSwipe,
+        swipe_status: page.swipeStatus,
+        swipe_result: page.swipeResult,
+        cloned_data: page.clonedData as unknown as Record<string, unknown>,
+        swiped_data: page.swipedData as unknown as Record<string, unknown>,
+        analysis_status: page.analysisStatus,
+        analysis_result: page.analysisResult,
+        extracted_data: page.extractedData as unknown as Record<string, unknown>,
+      });
+      
+      set((state) => ({
+        funnelPages: state.funnelPages.map((p) =>
+          p.id === id ? dbFunnelPageToApp(updated) : p
+        ),
+      }));
+    } catch (error) {
+      console.error('Error updating funnel page:', error);
+      throw error;
+    }
+  },
+
+  deleteFunnelPage: async (id) => {
+    try {
+      await supabaseOps.deleteFunnelPage(id);
+      set((state) => ({
+        funnelPages: state.funnelPages.filter((p) => p.id !== id),
+      }));
+    } catch (error) {
+      console.error('Error deleting funnel page:', error);
+      throw error;
+    }
+  },
+
+  launchSwipe: async (id) => {
+    const page = get().funnelPages.find((p) => p.id === id);
+    if (!page || !page.urlToSwipe) return;
+
+    const product = get().products.find((p) => p.id === page.productId);
+    if (!product) {
+      await get().updateFunnelPage(id, {
+        swipeStatus: 'failed',
+        swipeResult: 'Seleziona un prodotto prima di lanciare lo swipe',
+      });
+      return;
+    }
+
+    await get().updateFunnelPage(id, { swipeStatus: 'in_progress' });
+
+    try {
+      const response = await fetch(SWIPE_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_url: page.urlToSwipe,
+          product: {
+            name: product.name,
+            description: product.description,
+            benefits: product.benefits,
+            cta_text: product.ctaText,
+            cta_url: product.ctaUrl,
+            brand_name: product.brandName,
+          },
+          language: 'it',
+        }),
+      });
+
+      const data: SwipeApiResponse = await response.json();
+
+      if (!response.ok || !data.success) {
+        await get().updateFunnelPage(id, {
+          swipeStatus: 'failed',
+          swipeResult: data.error || 'Errore durante lo swipe',
+        });
+        return;
+      }
+
+      await get().updateFunnelPage(id, {
+        swipeStatus: 'completed',
+        swipeResult: `✓ Swipe completato: "${data.new_title}" (${data.new_length} chars, ${data.processing_time_seconds.toFixed(2)}s)`,
+        swipedData: {
+          html: data.html,
+          originalTitle: data.original_title,
+          newTitle: data.new_title,
+          originalLength: data.original_length,
+          newLength: data.new_length,
+          processingTime: data.processing_time_seconds,
+          methodUsed: data.method_used,
+          changesMade: data.changes_made,
+          swipedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      await get().updateFunnelPage(id, {
+        swipeStatus: 'failed',
+        swipeResult: error instanceof Error ? error.message : 'Errore di rete',
+      });
+    }
+  },
+
+  // Post Purchase Pages
+  postPurchasePages: [],
+
+  addPostPurchasePage: async (page) => {
+    try {
+      const created = await supabaseOps.createPostPurchasePage({
+        name: page.name,
+        type: page.type,
+        product_id: page.productId,
+        url_to_swipe: page.urlToSwipe,
+        swipe_status: page.swipeStatus,
+        swipe_result: page.swipeResult,
+        cloned_data: page.clonedData as unknown as Record<string, unknown>,
+        swiped_data: page.swipedData as unknown as Record<string, unknown>,
+      });
+      
+      set((state) => ({
+        postPurchasePages: [dbPostPurchaseToApp(created), ...state.postPurchasePages],
+      }));
+    } catch (error) {
+      console.error('Error adding post purchase page:', error);
+      throw error;
+    }
+  },
+
+  updatePostPurchasePage: async (id, page) => {
+    try {
+      const updated = await supabaseOps.updatePostPurchasePage(id, {
+        name: page.name,
+        type: page.type,
+        product_id: page.productId,
+        url_to_swipe: page.urlToSwipe,
+        swipe_status: page.swipeStatus,
+        swipe_result: page.swipeResult,
+        cloned_data: page.clonedData as unknown as Record<string, unknown>,
+        swiped_data: page.swipedData as unknown as Record<string, unknown>,
+      });
+      
+      set((state) => ({
+        postPurchasePages: state.postPurchasePages.map((p) =>
+          p.id === id ? dbPostPurchaseToApp(updated) : p
+        ),
+      }));
+    } catch (error) {
+      console.error('Error updating post purchase page:', error);
+      throw error;
+    }
+  },
+
+  deletePostPurchasePage: async (id) => {
+    try {
+      await supabaseOps.deletePostPurchasePage(id);
+      set((state) => ({
+        postPurchasePages: state.postPurchasePages.filter((p) => p.id !== id),
+      }));
+    } catch (error) {
+      console.error('Error deleting post purchase page:', error);
+      throw error;
+    }
+  },
+
+  launchPostPurchaseSwipe: async (id) => {
+    const page = get().postPurchasePages.find((p) => p.id === id);
+    if (!page || !page.urlToSwipe) return;
+
+    const product = get().products.find((p) => p.id === page.productId);
+    if (!product) {
+      await get().updatePostPurchasePage(id, {
+        swipeStatus: 'failed',
+        swipeResult: 'Seleziona un prodotto prima di lanciare lo swipe',
+      });
+      return;
+    }
+
+    await get().updatePostPurchasePage(id, { swipeStatus: 'in_progress' });
+
+    try {
+      const response = await fetch(SWIPE_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_url: page.urlToSwipe,
+          product: {
+            name: product.name,
+            description: product.description,
+            benefits: product.benefits,
+            cta_text: product.ctaText,
+            cta_url: product.ctaUrl,
+            brand_name: product.brandName,
+          },
+          language: 'it',
+        }),
+      });
+
+      const data: SwipeApiResponse = await response.json();
+
+      if (!response.ok || !data.success) {
+        await get().updatePostPurchasePage(id, {
+          swipeStatus: 'failed',
+          swipeResult: data.error || 'Errore durante lo swipe',
+        });
+        return;
+      }
+
+      await get().updatePostPurchasePage(id, {
+        swipeStatus: 'completed',
+        swipeResult: `✓ Swipe completato: "${data.new_title}" (${data.new_length} chars)`,
+        swipedData: {
+          html: data.html,
+          originalTitle: data.original_title,
+          newTitle: data.new_title,
+          originalLength: data.original_length,
+          newLength: data.new_length,
+          processingTime: data.processing_time_seconds,
+          methodUsed: data.method_used,
+          changesMade: data.changes_made,
+          swipedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      await get().updatePostPurchasePage(id, {
+        swipeStatus: 'failed',
+        swipeResult: error instanceof Error ? error.message : 'Errore di rete',
+      });
+    }
+  },
+}));

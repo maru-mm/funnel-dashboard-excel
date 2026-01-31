@@ -6,13 +6,52 @@ export type TemplateType =
   | 'upsell' 
   | 'downsell';
 
-export type PageType = 
-  | '5_reasons_listicle' 
-  | 'quiz_funnel' 
-  | 'landing' 
-  | 'product_page' 
-  | 'safe_page' 
-  | 'checkout';
+// Built-in page types
+export type BuiltInPageType = 
+  // Pre-sell / Top of Funnel
+  | 'advertorial'
+  | 'listicle'
+  | '5_reasons_listicle'
+  | 'native_ad'
+  | 'vsl'
+  | 'webinar'
+  | 'bridge_page'
+  // Landing & Opt-in
+  | 'landing'
+  | 'opt_in'
+  | 'squeeze_page'
+  | 'lead_magnet'
+  // Quiz & Survey
+  | 'quiz_funnel'
+  | 'survey'
+  | 'assessment'
+  // Sales Pages
+  | 'sales_letter'
+  | 'product_page'
+  | 'offer_page'
+  | 'checkout'
+  // Post-Purchase
+  | 'thank_you'
+  | 'upsell'
+  | 'downsell'
+  | 'oto'
+  | 'order_confirmation'
+  | 'membership'
+  // Content Pages
+  | 'blog'
+  | 'article'
+  | 'content_page'
+  | 'review'
+  // Compliance & Safe
+  | 'safe_page'
+  | 'privacy'
+  | 'terms'
+  | 'disclaimer'
+  // Other
+  | 'altro';
+
+// PageType can be a built-in type OR a custom string
+export type PageType = BuiltInPageType | string;
 
 export type SwipeStatus = 
   | 'pending' 
@@ -68,6 +107,59 @@ export interface FunnelAnalysis {
   benefits: string[];
 }
 
+export type TemplateCategory = 'standard' | 'quiz';
+
+export type TemplateViewFormat = 'desktop' | 'mobile';
+
+export interface SwipeTemplate {
+  id: string;
+  name: string;
+  sourceUrl: string;
+  pageType: PageType;
+  category: TemplateCategory;
+  viewFormat: TemplateViewFormat;
+  tags: string[];
+  description?: string;
+  previewImage?: string;
+  createdAt: Date;
+}
+
+export const TEMPLATE_VIEW_FORMAT_OPTIONS: { value: TemplateViewFormat; label: string; icon: string }[] = [
+  { value: 'desktop', label: 'Desktop', icon: '🖥️' },
+  { value: 'mobile', label: 'Mobile', icon: '📱' },
+];
+
+export const TEMPLATE_CATEGORY_OPTIONS: { value: TemplateCategory; label: string; description: string }[] = [
+  { value: 'standard', label: 'Template Standard', description: 'Landing page, advertorial, checkout, ecc.' },
+  { value: 'quiz', label: 'Quiz Template', description: 'Quiz funnel, survey, lead magnet interattivi' },
+];
+
+export type QuizAnalysisStatus = 'pending' | 'analyzing' | 'completed' | 'failed';
+
+export interface QuizAnalysisResult {
+  totalQuestions: number;
+  questionTypes: string[];
+  flowStructure: string;
+  resultsLogic: string;
+  designPatterns: string[];
+  ctaElements: string[];
+  engagementTechniques: string[];
+  recommendations: string[];
+  rawAnalysis: string;
+  analyzedAt: Date;
+}
+
+export interface QuizTemplate {
+  id: string;
+  name: string;
+  sourceUrl: string;
+  description?: string;
+  tags: string[];
+  analysisStatus: QuizAnalysisStatus;
+  analysisResult?: QuizAnalysisResult;
+  createdAt: Date;
+}
+
 export interface ClonedPageData {
   html: string;
   title: string;
@@ -81,7 +173,7 @@ export interface FunnelPage {
   id: string;
   name: string;
   pageType: PageType;
-  template: TemplateType;
+  templateId?: string; // Reference to SwipeTemplate
   productId: string;
   urlToSwipe: string;
   swipeStatus: SwipeStatus;
@@ -118,14 +210,85 @@ export const TEMPLATE_OPTIONS: { value: TemplateType; label: string }[] = [
   { value: 'downsell', label: 'Downsell' },
 ];
 
-export const PAGE_TYPE_OPTIONS: { value: PageType; label: string }[] = [
-  { value: '5_reasons_listicle', label: '5 Reasons Why Listicle' },
-  { value: 'quiz_funnel', label: 'Quiz Funnel' },
-  { value: 'landing', label: 'Landing Page' },
-  { value: 'product_page', label: 'Product Page' },
-  { value: 'safe_page', label: 'Safe Page' },
-  { value: 'checkout', label: 'Checkout' },
+// Custom page type created by user
+export interface CustomPageType {
+  id: string;
+  value: string;
+  label: string;
+  category: 'custom';
+  createdAt: Date;
+}
+
+// Page type option with category grouping
+export interface PageTypeOption {
+  value: PageType;
+  label: string;
+  category: 'presell' | 'landing' | 'quiz' | 'sales' | 'postpurchase' | 'content' | 'compliance' | 'other' | 'custom';
+}
+
+// Built-in page type options organized by category
+export const BUILT_IN_PAGE_TYPE_OPTIONS: PageTypeOption[] = [
+  // Pre-sell / Top of Funnel
+  { value: 'advertorial', label: 'Advertorial', category: 'presell' },
+  { value: 'listicle', label: 'Listicle', category: 'presell' },
+  { value: '5_reasons_listicle', label: '5 Reasons Why Listicle', category: 'presell' },
+  { value: 'native_ad', label: 'Native Ad', category: 'presell' },
+  { value: 'vsl', label: 'VSL (Video Sales Letter)', category: 'presell' },
+  { value: 'webinar', label: 'Webinar Page', category: 'presell' },
+  { value: 'bridge_page', label: 'Bridge Page', category: 'presell' },
+  // Landing & Opt-in
+  { value: 'landing', label: 'Landing Page', category: 'landing' },
+  { value: 'opt_in', label: 'Opt-in Page', category: 'landing' },
+  { value: 'squeeze_page', label: 'Squeeze Page', category: 'landing' },
+  { value: 'lead_magnet', label: 'Lead Magnet Page', category: 'landing' },
+  // Quiz & Survey
+  { value: 'quiz_funnel', label: 'Quiz Funnel', category: 'quiz' },
+  { value: 'survey', label: 'Survey Page', category: 'quiz' },
+  { value: 'assessment', label: 'Assessment', category: 'quiz' },
+  // Sales Pages
+  { value: 'sales_letter', label: 'Sales Letter', category: 'sales' },
+  { value: 'product_page', label: 'Product Page', category: 'sales' },
+  { value: 'offer_page', label: 'Offer Page', category: 'sales' },
+  { value: 'checkout', label: 'Checkout', category: 'sales' },
+  // Post-Purchase
+  { value: 'thank_you', label: 'Thank You Page', category: 'postpurchase' },
+  { value: 'upsell', label: 'Upsell Page', category: 'postpurchase' },
+  { value: 'downsell', label: 'Downsell Page', category: 'postpurchase' },
+  { value: 'oto', label: 'OTO (One Time Offer)', category: 'postpurchase' },
+  { value: 'order_confirmation', label: 'Order Confirmation', category: 'postpurchase' },
+  { value: 'membership', label: 'Membership Page', category: 'postpurchase' },
+  // Content Pages
+  { value: 'blog', label: 'Blog Post', category: 'content' },
+  { value: 'article', label: 'Article', category: 'content' },
+  { value: 'content_page', label: 'Content Page', category: 'content' },
+  { value: 'review', label: 'Review Page', category: 'content' },
+  // Compliance & Safe
+  { value: 'safe_page', label: 'Safe Page', category: 'compliance' },
+  { value: 'privacy', label: 'Privacy Policy', category: 'compliance' },
+  { value: 'terms', label: 'Terms & Conditions', category: 'compliance' },
+  { value: 'disclaimer', label: 'Disclaimer', category: 'compliance' },
+  // Other
+  { value: 'altro', label: 'Altro', category: 'other' },
 ];
+
+// Category labels for grouping in UI
+export const PAGE_TYPE_CATEGORIES: { value: PageTypeOption['category']; label: string; color: string }[] = [
+  { value: 'presell', label: 'Pre-Sell / Top of Funnel', color: 'bg-orange-100 text-orange-800' },
+  { value: 'landing', label: 'Landing & Opt-in', color: 'bg-blue-100 text-blue-800' },
+  { value: 'quiz', label: 'Quiz & Survey', color: 'bg-purple-100 text-purple-800' },
+  { value: 'sales', label: 'Sales Pages', color: 'bg-green-100 text-green-800' },
+  { value: 'postpurchase', label: 'Post-Purchase', color: 'bg-yellow-100 text-yellow-800' },
+  { value: 'content', label: 'Content Pages', color: 'bg-gray-100 text-gray-800' },
+  { value: 'compliance', label: 'Compliance & Safe', color: 'bg-red-100 text-red-800' },
+  { value: 'other', label: 'Altro', color: 'bg-gray-100 text-gray-600' },
+  { value: 'custom', label: 'Categorie Personalizzate', color: 'bg-indigo-100 text-indigo-800' },
+];
+
+// Legacy simple format for backward compatibility
+export const PAGE_TYPE_OPTIONS: { value: PageType; label: string }[] = BUILT_IN_PAGE_TYPE_OPTIONS.map(opt => ({
+  value: opt.value,
+  label: opt.label,
+}));
 
 export const POST_PURCHASE_TYPE_OPTIONS: { value: PostPurchasePage['type']; label: string }[] = [
   { value: 'thank_you', label: 'Thank You Page' },
@@ -141,3 +304,69 @@ export const STATUS_OPTIONS: { value: SwipeStatus; label: string; color: string 
   { value: 'completed', label: 'Completed', color: 'bg-green-200 text-green-800' },
   { value: 'failed', label: 'Failed', color: 'bg-red-200 text-red-800' },
 ];
+
+// =====================================================
+// VISION ANALYSIS TYPES
+// =====================================================
+
+export interface VisionSection {
+  section_index: number;
+  section_type_hint: string;
+  confidence: number;
+  text_preview: string;
+  has_cta: boolean;
+  bounding_box?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+}
+
+export interface VisionImage {
+  image_type: string;
+  description: string;
+  suggestion: string;
+  src?: string;
+  alt?: string;
+}
+
+export interface VisionJobSummary {
+  id: string;
+  source_url: string;
+  screenshot_url?: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  total_sections_detected: number;
+  created_at: string;
+  completed_at?: string;
+  error?: string;
+}
+
+export interface VisionJobDetail extends VisionJobSummary {
+  sections: VisionSection[];
+  images: VisionImage[];
+  page_structure?: {
+    has_hero: boolean;
+    has_testimonials: boolean;
+    has_pricing: boolean;
+    has_faq: boolean;
+    has_footer: boolean;
+    estimated_scroll_depth: number;
+  };
+  recommendations?: string[];
+  raw_analysis?: string;
+}
+
+export const SECTION_TYPE_COLORS: Record<string, string> = {
+  hero: 'bg-purple-100 text-purple-800 border-purple-300',
+  features: 'bg-blue-100 text-blue-800 border-blue-300',
+  benefits: 'bg-green-100 text-green-800 border-green-300',
+  testimonials: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+  pricing: 'bg-orange-100 text-orange-800 border-orange-300',
+  cta: 'bg-red-100 text-red-800 border-red-300',
+  faq: 'bg-indigo-100 text-indigo-800 border-indigo-300',
+  footer: 'bg-gray-100 text-gray-800 border-gray-300',
+  header: 'bg-teal-100 text-teal-800 border-teal-300',
+  social_proof: 'bg-pink-100 text-pink-800 border-pink-300',
+  unknown: 'bg-gray-100 text-gray-600 border-gray-300',
+};
