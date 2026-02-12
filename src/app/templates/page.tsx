@@ -3,8 +3,8 @@
 import { useState, useMemo } from 'react';
 import Header from '@/components/Header';
 import { useStore } from '@/store/useStore';
-import { BUILT_IN_PAGE_TYPE_OPTIONS, PAGE_TYPE_CATEGORIES, PageType, PageTypeOption, TemplateCategory, TEMPLATE_CATEGORY_OPTIONS, TemplateViewFormat, TEMPLATE_VIEW_FORMAT_OPTIONS } from '@/types';
-import { Plus, Trash2, Edit2, Save, X, FileCode, ExternalLink, Tag, Filter, Eye, EyeOff, Maximize2, Layers, HelpCircle, FolderPlus, Settings, Monitor, Smartphone } from 'lucide-react';
+import { BUILT_IN_PAGE_TYPE_OPTIONS, PAGE_TYPE_CATEGORIES, PageType, PageTypeOption, TemplateCategory, TEMPLATE_CATEGORY_OPTIONS, TemplateViewFormat, TEMPLATE_VIEW_FORMAT_OPTIONS, LIBRARY_TEMPLATES } from '@/types';
+import { Plus, Trash2, Edit2, Save, X, FileCode, ExternalLink, Tag, Filter, Eye, EyeOff, Maximize2, Layers, HelpCircle, FolderPlus, Settings, Monitor, Smartphone, BookOpen } from 'lucide-react';
 
 interface NewTemplateForm {
   name: string;
@@ -81,36 +81,33 @@ export default function TemplatesPage() {
     }
   };
 
-  // Filter templates by category
+  // Filter templates by category (for tab view when no tag filter)
   const categoryTemplates = useMemo(() => {
     return (templates || []).filter(t => (t.category || 'standard') === activeTab);
   }, [templates, activeTab]);
 
-  // Get all unique tags from current category templates
+  // Get all unique tags from ALL templates (per filtrare es. "tutti i funnel nutra")
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
-    categoryTemplates.forEach(t => t.tags?.forEach(tag => tagSet.add(tag)));
+    (templates || []).forEach(t => t.tags?.forEach(tag => tagSet.add(tag)));
     return Array.from(tagSet).sort();
-  }, [categoryTemplates]);
+  }, [templates]);
 
-  // Filter templates by selected tags and format
+  // When tag filter is active: show templates from ALL categories that match the tag(s)
+  // When no tag selected: show only current category (standard or quiz)
   const filteredTemplates = useMemo(() => {
-    let filtered = categoryTemplates;
-    
-    // Filter by tags
-    if (selectedFilterTags.length > 0) {
-      filtered = filtered.filter(t => 
-        selectedFilterTags.some(filterTag => t.tags?.includes(filterTag))
-      );
-    }
-    
-    // Filter by format
+    const baseList = selectedFilterTags.length > 0
+      ? (templates || []).filter(t =>
+          selectedFilterTags.some(filterTag => t.tags?.includes(filterTag))
+        )
+      : categoryTemplates;
+
+    let filtered = baseList;
     if (selectedFormatFilter !== 'all') {
       filtered = filtered.filter(t => (t.viewFormat || 'desktop') === selectedFormatFilter);
     }
-    
     return filtered;
-  }, [categoryTemplates, selectedFilterTags, selectedFormatFilter]);
+  }, [templates, categoryTemplates, selectedFilterTags, selectedFormatFilter]);
 
   // Count templates per category
   const standardCount = (templates || []).filter(t => (t.category || 'standard') === 'standard').length;
@@ -198,6 +195,41 @@ export default function TemplatesPage() {
       />
 
       <div className="p-6">
+        {/* Biblioteca Template — Fase 1: lista template da categorizzare e bibliotecare */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-slate-50 to-gray-50">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-slate-600" />
+              Biblioteca Template
+            </h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Fase 1 — Salvare, categorizzare e bibliotecare funnel di diversa tipologia.
+            </p>
+          </div>
+          <div className="p-6">
+            <ul className="space-y-3" role="list">
+              {LIBRARY_TEMPLATES.map((entry, index) => (
+                <li
+                  key={entry.id}
+                  className="flex items-center gap-4 py-3 px-4 rounded-lg border border-gray-100 bg-gray-50/50 hover:bg-gray-50 transition-colors"
+                >
+                  <span className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-white border border-gray-200 text-sm font-medium text-gray-600">
+                    {index + 1}
+                  </span>
+                  <span className="font-medium text-gray-900">{entry.name}</span>
+                  <span className={`ml-auto px-2.5 py-1 rounded-full text-xs font-medium ${
+                    entry.category === 'quiz'
+                      ? 'bg-purple-100 text-purple-800'
+                      : 'bg-blue-100 text-blue-800'
+                  }`}>
+                    {entry.category === 'quiz' ? 'Quiz' : 'Standard'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
         {/* Category Tabs */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
           <div className="flex border-b border-gray-200">
@@ -298,7 +330,9 @@ export default function TemplatesPage() {
               Aggiungi {activeTab === 'standard' ? 'Template' : 'Quiz Template'}
             </button>
             <span className="text-gray-500">
-              {filteredTemplates.length} di {categoryTemplates.length} template
+              {selectedFilterTags.length > 0
+                ? `${filteredTemplates.length} template con tag ${selectedFilterTags.join(', ')}`
+                : `${filteredTemplates.length} di ${categoryTemplates.length} template`}
             </span>
           </div>
           
@@ -396,12 +430,12 @@ export default function TemplatesPage() {
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                   {(customPageTypes || []).map((pageType) => (
                     <div
-                      key={pageType.id}
+                      key={pageType.value}
                       className="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-indigo-200"
                     >
                       <span className="text-sm font-medium text-gray-800">{pageType.label}</span>
                       <button
-                        onClick={() => deleteCustomPageType(pageType.id)}
+                        onClick={() => deleteCustomPageType(pageType.value)}
                         className="text-red-500 hover:text-red-700 p-1"
                         title="Elimina categoria"
                       >
@@ -694,22 +728,28 @@ export default function TemplatesPage() {
                 <HelpCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
               )}
               <h3 className="text-lg font-medium text-gray-900">
-                {categoryTemplates.length === 0 
-                  ? `Nessun ${activeTab === 'standard' ? 'template' : 'quiz template'}` 
-                  : 'Nessun template trovato'}
+                {selectedFilterTags.length > 0
+                  ? 'Nessun template con i tag selezionati'
+                  : categoryTemplates.length === 0
+                    ? `Nessun ${activeTab === 'standard' ? 'template' : 'quiz template'}`
+                    : 'Nessun template trovato'}
               </h3>
               <p className="text-gray-500 mt-1">
-                {categoryTemplates.length === 0 
-                  ? `Aggiungi il tuo primo ${activeTab === 'standard' ? 'template' : 'quiz template'} per iniziare`
-                  : 'Prova a modificare i filtri'}
+                {selectedFilterTags.length > 0
+                  ? 'Prova altri tag o cancella i filtri'
+                  : categoryTemplates.length === 0
+                    ? `Aggiungi il tuo primo ${activeTab === 'standard' ? 'template' : 'quiz template'} per iniziare`
+                    : 'Prova a modificare i filtri'}
               </p>
             </div>
           ) : (
-            filteredTemplates.map((template) => (
+            filteredTemplates.map((template) => {
+              const templateCategory = (template.category || 'standard') as TemplateCategory;
+              return (
               <div
                 key={template.id}
                 className={`rounded-lg shadow-sm border overflow-hidden hover:shadow-md transition-shadow ${
-                  activeTab === 'standard' 
+                  templateCategory === 'standard' 
                     ? 'bg-white border-gray-200' 
                     : 'bg-white border-purple-200'
                 }`}
@@ -717,6 +757,13 @@ export default function TemplatesPage() {
                 <div className="p-6">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
+                      {selectedFilterTags.length > 0 && (
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium mb-2 ${
+                          templateCategory === 'standard' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                        }`}>
+                          {templateCategory === 'standard' ? 'Standard' : 'Quiz'}
+                        </span>
+                      )}
                       {editingId === template.id ? (
                         <div className="space-y-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -820,7 +867,7 @@ export default function TemplatesPage() {
                                   <span
                                     key={index}
                                     className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm ${
-                                      activeTab === 'standard' 
+                                      templateCategory === 'standard' 
                                         ? 'bg-blue-100 text-blue-800' 
                                         : 'bg-purple-100 text-purple-800'
                                     }`}
@@ -860,14 +907,14 @@ export default function TemplatesPage() {
                       ) : (
                         <>
                           <div className="flex items-center gap-3 mb-2">
-                            {activeTab === 'standard' ? (
+                            {templateCategory === 'standard' ? (
                               <Layers className="w-5 h-5 text-blue-600" />
                             ) : (
                               <HelpCircle className="w-5 h-5 text-purple-600" />
                             )}
                             <h3 className="text-xl font-semibold text-gray-900">{template.name}</h3>
                             <span className={`px-2 py-0.5 text-xs rounded-full ${
-                              activeTab === 'standard' 
+                              templateCategory === 'standard' 
                                 ? 'bg-blue-100 text-blue-800' 
                                 : 'bg-purple-100 text-purple-800'
                             }`}>
@@ -921,7 +968,7 @@ export default function TemplatesPage() {
                             onClick={() => togglePreviewExpanded(template.id)}
                             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                               expandedPreviews.includes(template.id)
-                                ? activeTab === 'standard' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                                ? templateCategory === 'standard' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
                                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                             }`}
                           >
@@ -941,7 +988,7 @@ export default function TemplatesPage() {
                       )}
                     </div>
 
-                    {/* Actions */}
+                    {/* Actions - use templateCategory when filtering by tag */}
                     {editingId !== template.id && (
                       <div className="flex gap-2 ml-4">
                         <button
@@ -952,7 +999,7 @@ export default function TemplatesPage() {
                             viewFormat: template.viewFormat || 'desktop',
                           })}
                           className={`p-2 rounded-lg ${
-                            activeTab === 'standard' 
+                            templateCategory === 'standard' 
                               ? 'text-blue-500 hover:bg-blue-50' 
                               : 'text-purple-500 hover:bg-purple-50'
                           }`}
@@ -999,7 +1046,7 @@ export default function TemplatesPage() {
                   )}
                 </div>
               </div>
-            ))
+            ); })
           )}
         </div>
       </div>

@@ -40,6 +40,7 @@ interface AppSwipeTemplate {
   tags: string[];
   description?: string;
   previewImage?: string;
+  category?: 'standard' | 'quiz';
   createdAt: Date;
 }
 
@@ -50,8 +51,10 @@ interface AppFunnelPage {
   templateId?: string;
   productId: string;
   urlToSwipe: string;
+  prompt?: string;
   swipeStatus: SwipeStatus;
   swipeResult?: string;
+  feedback?: string;
   clonedData?: {
     html: string;
     title: string;
@@ -132,6 +135,7 @@ function dbProductToApp(p: Product): AppProduct {
 }
 
 function dbTemplateToApp(t: SwipeTemplate): AppSwipeTemplate {
+  const row = t as SwipeTemplate & { category?: 'standard' | 'quiz' };
   return {
     id: t.id,
     name: t.name,
@@ -141,6 +145,7 @@ function dbTemplateToApp(t: SwipeTemplate): AppSwipeTemplate {
     tags: t.tags,
     description: t.description || undefined,
     previewImage: t.preview_image || undefined,
+    category: row.category || 'standard',
     createdAt: new Date(t.created_at),
   };
 }
@@ -153,8 +158,10 @@ function dbFunnelPageToApp(p: FunnelPage): AppFunnelPage {
     templateId: p.template_id || undefined,
     productId: p.product_id,
     urlToSwipe: p.url_to_swipe,
+    prompt: (p as Record<string, unknown>).prompt as string | undefined,
     swipeStatus: p.swipe_status,
     swipeResult: p.swipe_result || undefined,
+    feedback: (p as Record<string, unknown>).feedback as string | undefined,
     clonedData: p.cloned_data as AppFunnelPage['clonedData'],
     swipedData: p.swiped_data as AppFunnelPage['swipedData'],
     analysisStatus: p.analysis_status || undefined,
@@ -202,6 +209,11 @@ interface Store {
   updateProduct: (id: string, product: Partial<AppProduct>) => Promise<void>;
   deleteProduct: (id: string) => Promise<void>;
 
+  // Custom page types (per Templates)
+  customPageTypes: { value: string; label: string }[];
+  addCustomPageType: (label: string) => void;
+  deleteCustomPageType: (value: string) => void;
+
   // Front End Funnel Pages
   funnelPages: AppFunnelPage[];
   addFunnelPage: (page: Omit<AppFunnelPage, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
@@ -223,19 +235,32 @@ export const useStore = create<Store>()((set, get) => ({
   error: null,
   isInitialized: false,
 
-  // Initialize data from Supabase
+  // Initialize data from Supabase (con timeout per evitare caricamento infinito)
   initializeData: async () => {
     if (get().isInitialized) return;
-    
+
+    const SUPABASE_INIT_TIMEOUT_MS = 12_000;
+
     set({ isLoading: true, error: null });
-    
-    try {
-      const [products, templates, funnelPages, postPurchasePages] = await Promise.all([
-        supabaseOps.fetchProducts(),
-        supabaseOps.fetchTemplates(),
-        supabaseOps.fetchFunnelPages(),
-        supabaseOps.fetchPostPurchasePages(),
+
+    const fetchWithTimeout = <T>(promise: Promise<T>): Promise<T> => {
+      return Promise.race([
+        promise,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout: Supabase non ha risposto in 12 secondi')), SUPABASE_INIT_TIMEOUT_MS)
+        ),
       ]);
+    };
+
+    try {
+      const [products, templates, funnelPages, postPurchasePages] = await fetchWithTimeout(
+        Promise.all([
+          supabaseOps.fetchProducts(),
+          supabaseOps.fetchTemplates(),
+          supabaseOps.fetchFunnelPages(),
+          supabaseOps.fetchPostPurchasePages(),
+        ])
+      );
 
       set({
         products: products.map(dbProductToApp),
@@ -247,7 +272,7 @@ export const useStore = create<Store>()((set, get) => ({
       });
     } catch (error) {
       console.error('Error initializing data from Supabase:', error);
-      set({ 
+      set({
         error: error instanceof Error ? error.message : 'Errore di connessione a Supabase',
         isLoading: false,
       });
@@ -374,6 +399,24 @@ export const useStore = create<Store>()((set, get) => ({
     }
   },
 
+  // Custom page types (in-memory, per Templates)
+  customPageTypes: [],
+  addCustomPageType: (label) => {
+    const value = label.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    if (!value) return;
+    set((s) => {
+      if (s.customPageTypes.some((ct) => ct.value === value)) return s;
+      return {
+        customPageTypes: [...s.customPageTypes, { value, label }],
+      };
+    });
+  },
+  deleteCustomPageType: (value) => {
+    set((s) => ({
+      customPageTypes: s.customPageTypes.filter((ct) => ct.value !== value),
+    }));
+  },
+
   // Front End Funnel Pages
   funnelPages: [],
 
@@ -385,14 +428,16 @@ export const useStore = create<Store>()((set, get) => ({
         template_id: page.templateId,
         product_id: page.productId,
         url_to_swipe: page.urlToSwipe,
+        prompt: page.prompt,
         swipe_status: page.swipeStatus,
         swipe_result: page.swipeResult,
+        feedback: page.feedback,
         cloned_data: page.clonedData as unknown as Record<string, unknown>,
         swiped_data: page.swipedData as unknown as Record<string, unknown>,
         analysis_status: page.analysisStatus,
         analysis_result: page.analysisResult,
         extracted_data: page.extractedData as unknown as Record<string, unknown>,
-      });
+      } as Parameters<typeof supabaseOps.createFunnelPage>[0]);
       
       set((state) => ({
         funnelPages: [dbFunnelPageToApp(created), ...state.funnelPages],
@@ -411,14 +456,16 @@ export const useStore = create<Store>()((set, get) => ({
         template_id: page.templateId,
         product_id: page.productId,
         url_to_swipe: page.urlToSwipe,
+        prompt: page.prompt,
         swipe_status: page.swipeStatus,
         swipe_result: page.swipeResult,
+        feedback: page.feedback,
         cloned_data: page.clonedData as unknown as Record<string, unknown>,
         swiped_data: page.swipedData as unknown as Record<string, unknown>,
         analysis_status: page.analysisStatus,
         analysis_result: page.analysisResult,
         extracted_data: page.extractedData as unknown as Record<string, unknown>,
-      });
+      } as Parameters<typeof supabaseOps.updateFunnelPage>[1]);
       
       set((state) => ({
         funnelPages: state.funnelPages.map((p) =>

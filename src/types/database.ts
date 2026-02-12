@@ -14,7 +14,8 @@ export type PageType =
   | 'safe_page' 
   | 'checkout'
   | 'advertorial'
-  | 'altro';
+  | 'altro'
+  | (string & {}); // allow custom page types from Templates
 
 export type SwipeStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
@@ -194,6 +195,44 @@ export interface Database {
           updated_at?: string;
         };
       };
+      funnel_crawl_steps: {
+        Row: {
+          id: string;
+          funnel_name: string;
+          funnel_tag: string | null;
+          entry_url: string;
+          step_index: number;
+          url: string;
+          title: string;
+          step_data: Json;
+          screenshot_base64: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          funnel_name?: string;
+          funnel_tag?: string | null;
+          entry_url: string;
+          step_index: number;
+          url: string;
+          title?: string;
+          step_data?: Json;
+          screenshot_base64?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          funnel_name?: string;
+          funnel_tag?: string | null;
+          entry_url?: string;
+          step_index?: number;
+          url?: string;
+          title?: string;
+          step_data?: Json;
+          screenshot_base64?: string | null;
+          created_at?: string;
+        };
+      };
     };
   };
 }
@@ -214,3 +253,6 @@ export type FunnelPageUpdate = Database['public']['Tables']['funnel_pages']['Upd
 export type PostPurchasePage = Database['public']['Tables']['post_purchase_pages']['Row'];
 export type PostPurchasePageInsert = Database['public']['Tables']['post_purchase_pages']['Insert'];
 export type PostPurchasePageUpdate = Database['public']['Tables']['post_purchase_pages']['Update'];
+
+export type FunnelCrawlStepRow = Database['public']['Tables']['funnel_crawl_steps']['Row'];
+export type FunnelCrawlStepInsert = Database['public']['Tables']['funnel_crawl_steps']['Insert'];

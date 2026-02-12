@@ -1095,7 +1095,7 @@ export default function FirecrawlPage() {
                 </div>
               </div>
 
-              {response.success && response.data && (
+              {response.success && response.data ? (
                 <div className="flex items-center gap-2">
                   <div className="flex border border-gray-300 rounded-lg overflow-hidden">
                     <button
@@ -1127,7 +1127,7 @@ export default function FirecrawlPage() {
                     Download
                   </button>
                 </div>
-              )}
+              ) : null}
             </div>
 
             {/* Response Body */}

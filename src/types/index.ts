@@ -48,7 +48,7 @@ export type BuiltInPageType =
   | 'terms'
   | 'disclaimer'
   // Other
-  | 'altro';
+  | 'other';
 
 // PageType can be a built-in type OR a custom string
 export type PageType = BuiltInPageType | string;
@@ -134,6 +134,20 @@ export const TEMPLATE_CATEGORY_OPTIONS: { value: TemplateCategory; label: string
   { value: 'quiz', label: 'Quiz Template', description: 'Quiz funnel, survey, lead magnet interattivi' },
 ];
 
+/** Biblioteca template — Fase 1: salvare, categorizzare e bibliotecare funnel di diversa tipologia */
+export interface LibraryTemplateEntry {
+  id: string;
+  name: string;
+  category: TemplateCategory;
+}
+
+export const LIBRARY_TEMPLATES: LibraryTemplateEntry[] = [
+  { id: 'quiz-mounjaro-fit', name: 'Quiz funnel Mounjaro Fit', category: 'quiz' },
+  { id: 'funnel-bioma', name: 'Funnel Bioma', category: 'standard' },
+  { id: 'funnel-cold-protector', name: 'Funnel Cold Protector', category: 'standard' },
+  { id: 'funnel-rosabella', name: 'Funnel Rosabella', category: 'standard' },
+];
+
 export type QuizAnalysisStatus = 'pending' | 'analyzing' | 'completed' | 'failed';
 
 export interface QuizAnalysisResult {
@@ -176,8 +190,10 @@ export interface FunnelPage {
   templateId?: string; // Reference to SwipeTemplate
   productId: string;
   urlToSwipe: string;
+  prompt?: string; // Custom prompt for AI analysis
   swipeStatus: SwipeStatus;
   swipeResult?: string;
+  feedback?: string; // User feedback after swipe
   clonedData?: ClonedPageData;
   swipedData?: SwipedPageData;
   analysisStatus?: SwipeStatus;
@@ -268,7 +284,7 @@ export const BUILT_IN_PAGE_TYPE_OPTIONS: PageTypeOption[] = [
   { value: 'terms', label: 'Terms & Conditions', category: 'compliance' },
   { value: 'disclaimer', label: 'Disclaimer', category: 'compliance' },
   // Other
-  { value: 'altro', label: 'Altro', category: 'other' },
+  { value: 'other', label: 'Other', category: 'other' },
 ];
 
 // Category labels for grouping in UI
@@ -280,8 +296,8 @@ export const PAGE_TYPE_CATEGORIES: { value: PageTypeOption['category']; label: s
   { value: 'postpurchase', label: 'Post-Purchase', color: 'bg-yellow-100 text-yellow-800' },
   { value: 'content', label: 'Content Pages', color: 'bg-gray-100 text-gray-800' },
   { value: 'compliance', label: 'Compliance & Safe', color: 'bg-red-100 text-red-800' },
-  { value: 'other', label: 'Altro', color: 'bg-gray-100 text-gray-600' },
-  { value: 'custom', label: 'Categorie Personalizzate', color: 'bg-indigo-100 text-indigo-800' },
+  { value: 'other', label: 'Other', color: 'bg-gray-100 text-gray-600' },
+  { value: 'custom', label: 'Custom Categories', color: 'bg-indigo-100 text-indigo-800' },
 ];
 
 // Legacy simple format for backward compatibility
@@ -370,3 +386,115 @@ export const SECTION_TYPE_COLORS: Record<string, string> = {
   social_proof: 'bg-pink-100 text-pink-800 border-pink-300',
   unknown: 'bg-gray-100 text-gray-600 border-gray-300',
 };
+
+// =====================================================
+// FUNNEL ANALYZER (Browser automation / crawl)
+// =====================================================
+
+export interface FunnelCrawlLink {
+  href: string;
+  text: string;
+  isCta: boolean;
+  selector?: string;
+}
+
+export interface FunnelCrawlForm {
+  action: string;
+  method: string;
+  inputs: { name: string; type: string; required?: boolean }[];
+  submitButtonText?: string;
+}
+
+export interface FunnelCrawlNetworkRequest {
+  url: string;
+  method: string;
+  resourceType: string;
+  status?: number;
+  isTracking?: boolean;
+  isCheckout?: boolean;
+}
+
+export interface FunnelCrawlCookie {
+  name: string;
+  domain: string;
+  path: string;
+  expires: number;
+  httpOnly: boolean;
+  secure: boolean;
+}
+
+export interface FunnelCrawlStep {
+  stepIndex: number;
+  url: string;
+  title: string;
+  screenshotBase64?: string;
+  links: FunnelCrawlLink[];
+  ctaButtons: FunnelCrawlLink[];
+  forms: FunnelCrawlForm[];
+  networkRequests: FunnelCrawlNetworkRequest[];
+  cookies: FunnelCrawlCookie[];
+  domLength: number;
+  redirectFrom?: string;
+  timestamp: string;
+}
+
+export interface FunnelCrawlOptions {
+  entryUrl: string;
+  headless?: boolean;
+  maxSteps?: number;
+  maxDepth?: number;
+  followSameOriginOnly?: boolean;
+  captureScreenshots?: boolean;
+  captureDom?: boolean;
+  captureNetwork?: boolean;
+  captureCookies?: boolean;
+  simulateInteractions?: boolean;
+  viewportWidth?: number;
+  viewportHeight?: number;
+}
+
+export interface FunnelCrawlResult {
+  success: boolean;
+  entryUrl: string;
+  steps: FunnelCrawlStep[];
+  totalSteps: number;
+  durationMs: number;
+  error?: string;
+  visitedUrls: string[];
+}
+
+// =====================================================
+// FUNNEL VISION ANALYSIS (AI extraction per pagina)
+// =====================================================
+
+export type FunnelPageType =
+  | 'opt-in'
+  | 'vsl'
+  | 'sales_page'
+  | 'order_form'
+  | 'upsell'
+  | 'downsell'
+  | 'thank_you'
+  | 'bridge_page'
+  | 'landing'
+  | 'checkout'
+  | 'other';
+
+export interface FunnelPageVisionAnalysis {
+  stepIndex: number;
+  url: string;
+  page_type: FunnelPageType;
+  headline: string | null;
+  subheadline: string | null;
+  body_copy: string | null;
+  cta_text: string[];
+  offer_details: string | null;
+  price_points: string[];
+  urgency_elements: string[];
+  social_proof: string[];
+  tech_stack_detected: string[];
+  outbound_links: string[];
+  persuasion_techniques_used: string[];
+  raw?: string;
+  error?: string;
+}

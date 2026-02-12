@@ -16,7 +16,6 @@ import {
 import {
   Plus,
   Trash2,
-  Play,
   Loader2,
   ExternalLink,
   CheckCircle,
@@ -34,6 +33,7 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  MessageSquare,
 } from 'lucide-react';
 
 // API endpoints - can switch between local proxy, direct fly.dev, or local dev server
@@ -78,6 +78,7 @@ interface SwipeJobConfig {
   language: string;
   benefits: string[];
   brand_name: string;
+  prompt?: string;
 }
 
 interface JobStatus {
@@ -88,7 +89,7 @@ interface JobStatus {
   result_url?: string;
   started_at?: string;
   completed_at?: string;
-  vision_job_id?: string; // Available after Layer 1 (screenshot + vision analysis)
+  vision_job_id?: string;
 }
 
 interface ActiveJob {
@@ -99,7 +100,7 @@ interface ActiveJob {
   currentLayer?: string;
   startedAt?: Date;
   lastUpdate?: Date;
-  visionJobId?: string; // Vision analysis job ID
+  visionJobId?: string;
 }
 
 export default function FrontEndFunnel() {
@@ -113,10 +114,9 @@ export default function FrontEndFunnel() {
     customPageTypes,
   } = useStore();
 
-  // Combine built-in and custom page types
   const allPageTypeOptions: PageTypeOption[] = [
     ...BUILT_IN_PAGE_TYPE_OPTIONS,
-    ...(customPageTypes || []).map(ct => ({
+    ...(customPageTypes || []).map((ct) => ({
       value: ct.value,
       label: ct.label,
       category: 'custom' as const,
@@ -164,11 +164,12 @@ export default function FrontEndFunnel() {
     url: '',
     product_name: '',
     product_description: '',
-    cta_text: 'COMPRA ORA',
+    cta_text: 'BUY NOW',
     cta_url: '',
-    language: 'it',
+    language: 'en',
     benefits: [],
     brand_name: '',
+    prompt: '',
   });
   const [benefitInput, setBenefitInput] = useState('');
 
@@ -176,7 +177,7 @@ export default function FrontEndFunnel() {
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([]);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
-  // API Mode: 'local' uses Next.js proxy, 'server' calls fly.dev, 'localDev' calls localhost:8081
+  // API Mode
   const [apiMode, setApiMode] = useState<ApiMode>('localDev');
   const api = API_ENDPOINTS[apiMode];
 
@@ -196,13 +197,12 @@ export default function FrontEndFunnel() {
   const [visionError, setVisionError] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<number[]>([]);
 
-  // Poll job status - uses selected API mode
+  // Poll job status
   const pollJobStatus = useCallback(async (jobId: string, pageId: string) => {
     try {
       const response = await fetch(api.status(jobId));
       const status: JobStatus = await response.json();
 
-      // Update active job with detailed info (including vision_job_id when available)
       setActiveJobs(prev => prev.map(job => 
         job.jobId === jobId 
           ? { 
@@ -211,57 +211,51 @@ export default function FrontEndFunnel() {
               progress: status.progress || 0,
               currentLayer: status.current_layer,
               lastUpdate: new Date(),
-              // Save vision_job_id when it becomes available (after Layer 1)
               visionJobId: status.vision_job_id || job.visionJobId,
             }
           : job
       ));
 
-      // Update page result with layer info
       const layerInfo = status.current_layer ? ` [${status.current_layer}]` : '';
       updateFunnelPage(pageId, {
         swipeResult: `${status.progress || 0}%${layerInfo}`,
       });
 
       if (status.status === 'completed') {
-        // Job completed - update page and show result
         updateFunnelPage(pageId, {
           swipeStatus: 'completed',
-          swipeResult: `✓ Completato!`,
+          swipeResult: `✓ Completed!`,
         });
         
         setLoadingIds(prev => prev.filter(i => i !== pageId));
         
-        // Keep job in list for 5 seconds to show completion
         setTimeout(() => {
           setActiveJobs(prev => prev.filter(job => job.jobId !== jobId));
         }, 5000);
 
-        // Open preview modal with iframe to result
         const page = (funnelPages || []).find(p => p.id === pageId);
         setHtmlPreviewModal({
           isOpen: true,
-          title: page?.name || 'Risultato Swipe',
+          title: page?.name || 'Swipe Result',
           html: '',
           iframeSrc: api.result(jobId),
           metadata: null,
         });
 
-        return true; // Stop polling
+        return true;
       } else if (status.status === 'failed') {
         updateFunnelPage(pageId, {
           swipeStatus: 'failed',
-          swipeResult: status.error || 'Job fallito',
+          swipeResult: status.error || 'Job failed',
         });
         setLoadingIds(prev => prev.filter(i => i !== pageId));
         setActiveJobs(prev => prev.filter(job => job.jobId !== jobId));
-        return true; // Stop polling
+        return true;
       }
 
-      return false; // Continue polling
+      return false;
     } catch (error) {
       console.error('Error polling job status:', error);
-      // Update with error but keep polling
       setActiveJobs(prev => prev.map(job => 
         job.jobId === jobId 
           ? { ...job, lastUpdate: new Date() }
@@ -287,7 +281,7 @@ export default function FrontEndFunnel() {
           await pollJobStatus(job.jobId, job.pageId);
         }
       }
-    }, 5000); // Poll every 5 seconds as recommended
+    }, 5000);
 
     return () => {
       if (pollingRef.current) {
@@ -298,12 +292,13 @@ export default function FrontEndFunnel() {
 
   const handleAddPage = () => {
     addFunnelPage({
-      name: 'Nuova Pagina',
+      name: 'New Page',
       pageType: 'landing',
-      template: 'advertorial',
       productId: products[0]?.id || '',
       urlToSwipe: '',
+      prompt: '',
       swipeStatus: 'pending',
+      feedback: '',
     });
   };
 
@@ -315,11 +310,12 @@ export default function FrontEndFunnel() {
       url: page.urlToSwipe,
       product_name: product?.name || '',
       product_description: product?.description || '',
-      cta_text: product?.ctaText || 'COMPRA ORA',
+      cta_text: product?.ctaText || 'BUY NOW',
       cta_url: product?.ctaUrl || '',
-      language: 'it',
+      language: 'en',
       benefits: product?.benefits || [],
       brand_name: product?.brandName || '',
+      prompt: page.prompt || '',
     });
 
     setSwipeConfigModal({
@@ -330,11 +326,7 @@ export default function FrontEndFunnel() {
     });
   };
 
-  // =====================================================
-  // VISION ANALYSIS FUNCTIONS
-  // =====================================================
-
-  // Fetch vision jobs for a source URL
+  // Vision Analysis Functions
   const fetchVisionJobs = async (sourceUrl: string) => {
     setVisionLoading(true);
     setVisionError(null);
@@ -342,32 +334,29 @@ export default function FrontEndFunnel() {
     setSelectedVisionJob(null);
 
     try {
-      // Encode the URL to use as project_id filter
       const projectId = encodeURIComponent(sourceUrl);
       const response = await fetch(`/api/vision/jobs?project_id=${projectId}&limit=20`);
       const data = await response.json();
 
       if (!data.success) {
-        setVisionError(data.error || 'Errore nel recupero delle analisi');
+        setVisionError(data.error || 'Error fetching analyses');
         return;
       }
 
       setVisionJobs(data.jobs || []);
       
-      // Auto-select the first completed job if available
       const completedJobs = (data.jobs || []).filter((j: VisionJobSummary) => j.status === 'completed');
       if (completedJobs.length > 0) {
         fetchVisionJobDetail(completedJobs[0].id);
       }
     } catch (error) {
       console.error('Error fetching vision jobs:', error);
-      setVisionError(error instanceof Error ? error.message : 'Errore di rete');
+      setVisionError(error instanceof Error ? error.message : 'Network error');
     } finally {
       setVisionLoading(false);
     }
   };
 
-  // Fetch detailed vision job data
   const fetchVisionJobDetail = async (jobId: string) => {
     setVisionLoading(true);
     setVisionError(null);
@@ -377,7 +366,7 @@ export default function FrontEndFunnel() {
       const data = await response.json();
 
       if (!data.success) {
-        setVisionError(data.error || 'Errore nel recupero dei dettagli');
+        setVisionError(data.error || 'Error fetching details');
         return;
       }
 
@@ -385,13 +374,12 @@ export default function FrontEndFunnel() {
       setExpandedSections([]);
     } catch (error) {
       console.error('Error fetching vision job detail:', error);
-      setVisionError(error instanceof Error ? error.message : 'Errore di rete');
+      setVisionError(error instanceof Error ? error.message : 'Network error');
     } finally {
       setVisionLoading(false);
     }
   };
 
-  // Open vision analysis modal for a page
   const openVisionModal = (page: typeof funnelPages[0]) => {
     setVisionModal({
       isOpen: true,
@@ -400,13 +388,11 @@ export default function FrontEndFunnel() {
       sourceUrl: page.urlToSwipe,
     });
     
-    // Fetch vision jobs for this URL
     if (page.urlToSwipe) {
       fetchVisionJobs(page.urlToSwipe);
     }
   };
 
-  // Toggle section expansion
   const toggleSectionExpanded = (index: number) => {
     setExpandedSections(prev =>
       prev.includes(index)
@@ -415,30 +401,30 @@ export default function FrontEndFunnel() {
     );
   };
 
-  // Get color class for section type
   const getSectionTypeColor = (type: string): string => {
     const normalizedType = type.toLowerCase().replace(/[^a-z]/g, '_');
     return SECTION_TYPE_COLORS[normalizedType] || SECTION_TYPE_COLORS.unknown;
   };
 
-  // Launch swipe with job API - uses selected API mode
+  // Launch swipe with job API
   const handleLaunchSwipeJob = async () => {
     const pageId = swipeConfigModal.pageId;
     
+    // Save prompt to the page
+    updateFunnelPage(pageId, { prompt: swipeConfig.prompt });
+    
     setSwipeConfigModal({ isOpen: false, pageId: '', pageName: '', url: '' });
     setLoadingIds(prev => [...prev, pageId]);
-    setShowJobsPanel(true); // Auto-show jobs panel
-    updateFunnelPage(pageId, { swipeStatus: 'in_progress', swipeResult: `Avvio...` });
+    setShowJobsPanel(true);
+    updateFunnelPage(pageId, { swipeStatus: 'in_progress', swipeResult: `Starting...` });
 
     try {
       let response: Response;
 
-      // Generate project_id from URL (use domain as identifier)
       const projectId = swipeConfig.url ? new URL(swipeConfig.url).hostname : 'default';
-      const userId = 'funnel-swiper-user'; // Default user - can be dynamic later
+      const userId = 'funnel-swiper-user';
 
       if (apiMode === 'local') {
-        // Use local proxy API to avoid CORS
         response = await fetch(api.start, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -453,10 +439,10 @@ export default function FrontEndFunnel() {
             benefits: swipeConfig.benefits.filter(b => b.trim()),
             project_id: projectId,
             user_id: userId,
+            prompt: swipeConfig.prompt,
           }),
         });
       } else {
-        // Direct server call with query params (for server and localDev modes)
         const params = new URLSearchParams({
           url: swipeConfig.url,
           product_name: swipeConfig.product_name,
@@ -468,6 +454,7 @@ export default function FrontEndFunnel() {
           user_id: userId,
         });
         
+        if (swipeConfig.prompt) params.append('prompt', swipeConfig.prompt);
         swipeConfig.benefits.forEach(benefit => {
           if (benefit.trim()) params.append('benefits', benefit.trim());
         });
@@ -481,10 +468,9 @@ export default function FrontEndFunnel() {
       const data = await response.json();
 
       if (!response.ok || !data.job_id) {
-        throw new Error(data.error || data.detail || 'Errore avvio job');
+        throw new Error(data.error || data.detail || 'Error starting job');
       }
 
-      // Add to active jobs for polling with start time
       setActiveJobs(prev => [...prev, {
         pageId,
         jobId: data.job_id,
@@ -502,7 +488,7 @@ export default function FrontEndFunnel() {
     } catch (error) {
       updateFunnelPage(pageId, {
         swipeStatus: 'failed',
-        swipeResult: error instanceof Error ? error.message : 'Errore di rete',
+        swipeResult: error instanceof Error ? error.message : 'Network error',
       });
       setLoadingIds(prev => prev.filter(i => i !== pageId));
     }
@@ -540,7 +526,7 @@ export default function FrontEndFunnel() {
         body: JSON.stringify({
           url: page.urlToSwipe,
           pageType: page.pageType,
-          template: page.template,
+          template: page.templateId || page.pageType || 'standard',
         }),
       });
 
@@ -549,7 +535,7 @@ export default function FrontEndFunnel() {
       if (!response.ok) {
         updateFunnelPage(page.id, { 
           analysisStatus: 'failed',
-          analysisResult: data.error || 'Errore durante l\'analisi'
+          analysisResult: data.error || 'Error during analysis'
         });
       } else {
         const resultText = data.analysis?.result || 
@@ -562,7 +548,6 @@ export default function FrontEndFunnel() {
           extractedData: data.extractedData
         });
 
-        // Apri il modal con i risultati
         setAnalysisModal({
           isOpen: true,
           pageId: page.id,
@@ -573,7 +558,7 @@ export default function FrontEndFunnel() {
     } catch (error) {
       updateFunnelPage(page.id, { 
         analysisStatus: 'failed',
-        analysisResult: 'Errore di rete'
+        analysisResult: 'Network error'
       });
     } finally {
       setAnalyzingIds((prev) => prev.filter((i) => i !== page.id));
@@ -597,7 +582,7 @@ export default function FrontEndFunnel() {
     <div className="min-h-screen">
       <Header
         title="Front End Funnel"
-        subtitle="Gestisci le pagine del funnel con vista Excel"
+        subtitle="Manage funnel pages with Excel-style view"
       />
 
       <div className="p-6">
@@ -610,10 +595,10 @@ export default function FrontEndFunnel() {
                 className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
               >
                 <Plus className="w-4 h-4" />
-                Aggiungi Pagina
+                Add Page
               </button>
               <span className="text-gray-500">
-                {(funnelPages || []).length} pagine
+                {(funnelPages || []).length} pages
               </span>
             </div>
             
@@ -663,10 +648,10 @@ export default function FrontEndFunnel() {
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin text-purple-600" />
-                  Jobs Attivi
+                  Active Jobs
                 </h3>
                 <span className="text-xs text-gray-500">
-                  Polling ogni 5s • API: {API_ENDPOINTS[apiMode].name}
+                  Polling every 5s • API: {API_ENDPOINTS[apiMode].name}
                 </span>
               </div>
               <div className="space-y-3">
@@ -729,7 +714,6 @@ export default function FrontEndFunnel() {
                         />
                       </div>
                       
-                      {/* Current Layer Info */}
                       {job.currentLayer && job.status === 'running' && (
                         <div className="mt-2 text-xs text-purple-700 flex items-center gap-1">
                           <span className="animate-pulse">●</span>
@@ -737,7 +721,6 @@ export default function FrontEndFunnel() {
                         </div>
                       )}
                       
-                      {/* Vision Job ID - Available after Layer 1 */}
                       {job.visionJobId && (
                         <div className="mt-2 flex items-center gap-2">
                           <span className="text-xs text-indigo-600 flex items-center gap-1">
@@ -758,19 +741,18 @@ export default function FrontEndFunnel() {
                             }}
                             className="text-xs text-indigo-600 hover:text-indigo-800 underline"
                           >
-                            Vedi analisi
+                            View Analysis
                           </button>
                         </div>
                       )}
 
-                      {/* Result button when completed */}
                       {job.status === 'completed' && (
                         <div className="mt-2 flex gap-2">
                           <button
                             onClick={() => {
                               setHtmlPreviewModal({
                                 isOpen: true,
-                                title: page?.name || 'Risultato',
+                                title: page?.name || 'Result',
                                 html: '',
                                 iframeSrc: api.result(job.jobId),
                                 metadata: null,
@@ -779,7 +761,7 @@ export default function FrontEndFunnel() {
                             className="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700"
                           >
                             <Eye className="w-3 h-3 inline mr-1" />
-                            Vedi Risultato
+                            View Result
                           </button>
                           <a
                             href={api.result(job.jobId)}
@@ -788,7 +770,7 @@ export default function FrontEndFunnel() {
                             className="text-xs px-2 py-1 bg-gray-600 text-white rounded hover:bg-gray-700"
                           >
                             <ExternalLink className="w-3 h-3 inline mr-1" />
-                            Apri
+                            Open
                           </a>
                         </div>
                       )}
@@ -803,8 +785,8 @@ export default function FrontEndFunnel() {
           {showJobsPanel && activeJobs.length === 0 && (
             <div className="mt-4 pt-4 border-t border-gray-200 text-center py-6 text-gray-500">
               <Loader2 className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              <p>Nessun job attivo</p>
-              <p className="text-xs mt-1">I job appariranno qui quando lanci uno swipe</p>
+              <p>No active jobs</p>
+              <p className="text-xs mt-1">Jobs will appear here when you launch a swipe</p>
             </div>
           )}
         </div>
@@ -812,26 +794,28 @@ export default function FrontEndFunnel() {
         {/* Excel-style Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="excel-table">
+            <table className="excel-table text-sm">
               <thead>
                 <tr>
-                  <th className="w-12">#</th>
-                  <th className="min-w-[200px]">Nome Pagina</th>
-                  <th className="min-w-[180px]">Tipo Pagina</th>
-                  <th className="min-w-[180px]">Template da Swipare</th>
-                  <th className="min-w-[300px]">URL da Swipare</th>
-                  <th className="min-w-[150px]">Prodotto</th>
-                  <th className="min-w-[120px]">Stato</th>
-                  <th className="min-w-[200px]">Risultato Swipe</th>
-                  <th className="min-w-[120px]">Analisi</th>
-                  <th className="min-w-[180px]">Azioni</th>
+                  <th className="w-10 px-2">#</th>
+                  <th className="min-w-[120px]">Page</th>
+                  <th className="min-w-[100px]">Type</th>
+                  <th className="min-w-[120px]">Template</th>
+                  <th className="min-w-[180px]">URL</th>
+                  <th className="min-w-[140px]">Prompt</th>
+                  <th className="min-w-[100px]">Product</th>
+                  <th className="w-20">Status</th>
+                  <th className="min-w-[120px]">Result</th>
+                  <th className="min-w-[100px]">Feedback</th>
+                  <th className="w-16">AI</th>
+                  <th className="w-24">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {(funnelPages || []).length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="text-center py-8 text-gray-500">
-                      Nessuna pagina. Clicca "Aggiungi Pagina" per iniziare.
+                    <td colSpan={12} className="text-center py-8 text-gray-500">
+                      No pages yet. Click &quot;Add Page&quot; to start.
                     </td>
                   </tr>
                 ) : (
@@ -850,7 +834,7 @@ export default function FrontEndFunnel() {
                           onChange={(e) =>
                             updateFunnelPage(page.id, { name: e.target.value })
                           }
-                          className="font-medium"
+                          className="font-medium truncate"
                         />
                       </td>
 
@@ -858,11 +842,13 @@ export default function FrontEndFunnel() {
                       <td>
                         <select
                           value={page.pageType}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const v = e.target.value;
                             updateFunnelPage(page.id, {
-                              pageType: e.target.value as PageType,
-                            })
-                          }
+                              // value from select is always a valid PageType (built-in or custom)
+                              pageType: v as PageType,
+                            });
+                          }}
                         >
                           {PAGE_TYPE_CATEGORIES.map((category) => {
                             const categoryOptions = groupedPageTypes[category.value] || [];
@@ -880,7 +866,7 @@ export default function FrontEndFunnel() {
                         </select>
                       </td>
 
-                      {/* Template da Swipare */}
+                      {/* Template to Swipe */}
                       <td>
                         <select
                           value={page.templateId || ''}
@@ -892,11 +878,11 @@ export default function FrontEndFunnel() {
                               urlToSwipe: selectedTemplate?.sourceUrl || page.urlToSwipe,
                             });
                           }}
-                          className="text-sm"
+                          className="truncate"
                         >
-                          <option value="">-- Seleziona Template --</option>
+                          <option value="">Template...</option>
                           {(templates || []).filter(t => (t.category || 'standard') === 'standard').length > 0 && (
-                            <optgroup label="📄 Template Standard">
+                            <optgroup label="📄 Standard Templates">
                               {(templates || [])
                                 .filter(t => (t.category || 'standard') === 'standard')
                                 .map((template) => (
@@ -907,7 +893,7 @@ export default function FrontEndFunnel() {
                             </optgroup>
                           )}
                           {(templates || []).filter(t => t.category === 'quiz').length > 0 && (
-                            <optgroup label="❓ Quiz Template">
+                            <optgroup label="❓ Quiz Templates">
                               {(templates || [])
                                 .filter(t => t.category === 'quiz')
                                 .map((template) => (
@@ -922,7 +908,7 @@ export default function FrontEndFunnel() {
 
                       {/* URL to Swipe */}
                       <td>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-0.5">
                           <input
                             type="url"
                             value={page.urlToSwipe}
@@ -932,19 +918,32 @@ export default function FrontEndFunnel() {
                               })
                             }
                             placeholder="https://..."
-                            className="flex-1"
+                            className="flex-1 truncate"
                           />
                           {page.urlToSwipe && (
                             <a
                               href={page.urlToSwipe}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-blue-500 hover:text-blue-700 p-1"
+                              className="text-blue-500 hover:text-blue-700 p-0.5 flex-shrink-0"
                             >
-                              <ExternalLink className="w-4 h-4" />
+                              <ExternalLink className="w-3 h-3" />
                             </a>
                           )}
                         </div>
+                      </td>
+
+                      {/* Prompt */}
+                      <td>
+                        <input
+                          type="text"
+                          value={page.prompt || ''}
+                          onChange={(e) =>
+                            updateFunnelPage(page.id, { prompt: e.target.value })
+                          }
+                          placeholder="Instructions..."
+                          className="truncate"
+                        />
                       </td>
 
                       {/* Product */}
@@ -956,8 +955,9 @@ export default function FrontEndFunnel() {
                               productId: e.target.value,
                             })
                           }
+                          className="truncate"
                         >
-                          <option value="">Seleziona...</option>
+                          <option value="">Product...</option>
                           {(products || []).map((prod) => (
                             <option key={prod.id} value={prod.id}>
                               {prod.name}
@@ -973,14 +973,14 @@ export default function FrontEndFunnel() {
 
                       {/* Swipe Result */}
                       <td>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                           {page.swipeStatus === 'completed' && (
-                            <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                            <CheckCircle className="w-3 h-3 text-green-500 flex-shrink-0" />
                           )}
                           {page.swipeStatus === 'failed' && (
-                            <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                            <XCircle className="w-3 h-3 text-red-500 flex-shrink-0" />
                           )}
-                          <span className="text-sm truncate max-w-[150px]" title={page.swipeResult || ''}>
+                          <span className="truncate max-w-[80px]" title={page.swipeResult || ''}>
                             {page.swipeResult || '-'}
                           </span>
                           {(page.swipedData || page.clonedData) && (
@@ -1012,12 +1012,29 @@ export default function FrontEndFunnel() {
                                   });
                                 }
                               }}
-                              className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded text-xs font-medium"
-                              title="Visualizza HTML swipato"
+                              className="p-1 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded"
+                              title="Preview"
                             >
                               <Eye className="w-3 h-3" />
-                              Preview
                             </button>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Feedback */}
+                      <td>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={page.feedback || ''}
+                            onChange={(e) =>
+                              updateFunnelPage(page.id, { feedback: e.target.value })
+                            }
+                            placeholder="Feedback..."
+                            className="flex-1"
+                          />
+                          {page.feedback && (
+                            <MessageSquare className="w-3 h-3 text-green-500 flex-shrink-0" />
                           )}
                         </div>
                       </td>
@@ -1049,7 +1066,7 @@ export default function FrontEndFunnel() {
                             {page.analysisStatus === 'completed' ? (
                               <span className="flex items-center gap-1">
                                 <FileText className="w-3 h-3" />
-                                Vedi
+                                View
                               </span>
                             ) : page.analysisStatus === 'in_progress' ? (
                               <span className="flex items-center gap-1">
@@ -1057,7 +1074,7 @@ export default function FrontEndFunnel() {
                                 ...
                               </span>
                             ) : page.analysisStatus === 'failed' ? (
-                              'Errore'
+                              'Error'
                             ) : (
                               '-'
                             )}
@@ -1069,7 +1086,7 @@ export default function FrontEndFunnel() {
 
                       {/* Actions */}
                       <td>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                           {/* Analyze Button */}
                           <button
                             onClick={() => handleAnalyze(page)}
@@ -1078,7 +1095,7 @@ export default function FrontEndFunnel() {
                               page.analysisStatus === 'in_progress' ||
                               !page.urlToSwipe
                             }
-                            className={`flex items-center gap-1 px-2 py-1 rounded text-sm font-medium transition-colors ${
+                            className={`p-1 rounded transition-colors ${
                               analyzingIds.includes(page.id) ||
                               page.analysisStatus === 'in_progress'
                                 ? 'bg-purple-100 text-purple-700'
@@ -1086,16 +1103,16 @@ export default function FrontEndFunnel() {
                                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                 : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
                             }`}
-                            title="Analizza Funnel Step"
+                            title="Analyze"
                           >
                             {analyzingIds.includes(page.id) ||
                             page.analysisStatus === 'in_progress' ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
-                              <Search className="w-3 h-3" />
+                              <Search className="w-3.5 h-3.5" />
                             )}
                           </button>
-                          {/* Swipe Button - Opens Config Modal */}
+                          {/* Swipe Button */}
                           <button
                             onClick={() => openSwipeConfig(page)}
                             disabled={
@@ -1103,7 +1120,7 @@ export default function FrontEndFunnel() {
                               page.swipeStatus === 'in_progress' ||
                               !page.urlToSwipe
                             }
-                            className={`flex items-center gap-1 px-2 py-1 rounded text-sm font-medium transition-colors ${
+                            className={`p-1 rounded transition-colors ${
                               loadingIds.includes(page.id) ||
                               page.swipeStatus === 'in_progress'
                                 ? 'bg-yellow-100 text-yellow-700'
@@ -1111,44 +1128,35 @@ export default function FrontEndFunnel() {
                                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                 : 'bg-green-100 text-green-700 hover:bg-green-200'
                             }`}
-                            title="Configura e Lancia Swipe"
+                            title="Swipe"
                           >
                             {loadingIds.includes(page.id) ||
                             page.swipeStatus === 'in_progress' ? (
-                              <>
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                {getActiveJob(page.id) && (
-                                  <span className="text-xs">{getActiveJob(page.id)?.progress}%</span>
-                                )}
-                              </>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
-                              <>
-                                <Wand2 className="w-3 h-3" />
-                                <span className="hidden sm:inline">Swipe</span>
-                              </>
+                              <Wand2 className="w-3.5 h-3.5" />
                             )}
                           </button>
-                          {/* Vision Analysis Button */}
+                          {/* Vision Button */}
                           <button
                             onClick={() => openVisionModal(page)}
                             disabled={!page.urlToSwipe}
-                            className={`flex items-center gap-1 px-2 py-1 rounded text-sm font-medium transition-colors ${
+                            className={`p-1 rounded transition-colors ${
                               !page.urlToSwipe
                                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                 : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
                             }`}
-                            title="Vedi Analisi Vision (Claude)"
+                            title="Vision"
                           >
-                            <ImageIcon className="w-3 h-3" />
-                            <span className="hidden sm:inline">Vision</span>
+                            <ImageIcon className="w-3.5 h-3.5" />
                           </button>
                           {/* Delete Button */}
                           <button
                             onClick={() => deleteFunnelPage(page.id)}
                             className="p-1 text-red-500 hover:bg-red-50 rounded"
-                            title="Elimina"
+                            title="Delete"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -1157,32 +1165,6 @@ export default function FrontEndFunnel() {
                 )}
               </tbody>
             </table>
-          </div>
-        </div>
-
-        {/* Legend */}
-        <div className="mt-6 bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-          <h3 className="font-semibold text-gray-900 mb-3">Legenda Tipi Pagina</h3>
-          <div className="space-y-3">
-            {PAGE_TYPE_CATEGORIES.map((category) => {
-              const categoryOptions = groupedPageTypes[category.value] || [];
-              if (categoryOptions.length === 0) return null;
-              return (
-                <div key={category.value}>
-                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${category.color} mb-2`}>
-                    {category.label}
-                  </span>
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2 pl-2">
-                    {categoryOptions.map((opt) => (
-                      <div key={opt.value} className="flex items-center gap-2">
-                        <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                        <span className="text-xs text-gray-600">{opt.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </div>
       </div>
@@ -1197,7 +1179,7 @@ export default function FrontEndFunnel() {
                 <Settings className="w-6 h-6 text-white" />
                 <div>
                   <h2 className="text-xl font-bold text-white">
-                    Configura Swipe
+                    Configure Swipe
                   </h2>
                   <p className="text-white/80 text-sm">
                     {swipeConfigModal.pageName}
@@ -1218,7 +1200,7 @@ export default function FrontEndFunnel() {
                 {/* URL */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    URL da Swipare
+                    URL to Swipe
                   </label>
                   <input
                     type="url"
@@ -1229,18 +1211,32 @@ export default function FrontEndFunnel() {
                   />
                 </div>
 
+                {/* Prompt */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Custom Prompt (Optional)
+                  </label>
+                  <textarea
+                    value={swipeConfig.prompt || ''}
+                    onChange={(e) => setSwipeConfig({ ...swipeConfig, prompt: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
+                    rows={2}
+                    placeholder="Add custom instructions for the AI..."
+                  />
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   {/* Product Name */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Nome Prodotto *
+                      Product Name *
                     </label>
                     <input
                       type="text"
                       value={swipeConfig.product_name}
                       onChange={(e) => setSwipeConfig({ ...swipeConfig, product_name: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
-                      placeholder="Il Tuo Prodotto"
+                      placeholder="Your Product"
                     />
                   </div>
 
@@ -1254,7 +1250,7 @@ export default function FrontEndFunnel() {
                       value={swipeConfig.brand_name}
                       onChange={(e) => setSwipeConfig({ ...swipeConfig, brand_name: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
-                      placeholder="TuoBrand"
+                      placeholder="YourBrand"
                     />
                   </div>
                 </div>
@@ -1262,14 +1258,14 @@ export default function FrontEndFunnel() {
                 {/* Description */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Descrizione Prodotto
+                    Product Description
                   </label>
                   <textarea
                     value={swipeConfig.product_description}
                     onChange={(e) => setSwipeConfig({ ...swipeConfig, product_description: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
                     rows={2}
-                    placeholder="Descrizione del tuo prodotto..."
+                    placeholder="Description of your product..."
                   />
                 </div>
 
@@ -1277,29 +1273,29 @@ export default function FrontEndFunnel() {
                   {/* CTA Text */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Testo CTA
+                      CTA Text
                     </label>
                     <input
                       type="text"
                       value={swipeConfig.cta_text}
                       onChange={(e) => setSwipeConfig({ ...swipeConfig, cta_text: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
-                      placeholder="COMPRA ORA"
+                      placeholder="BUY NOW"
                     />
                   </div>
 
                   {/* Language */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Lingua
+                      Language
                     </label>
                     <select
                       value={swipeConfig.language}
                       onChange={(e) => setSwipeConfig({ ...swipeConfig, language: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
                     >
-                      <option value="it">Italiano</option>
                       <option value="en">English</option>
+                      <option value="it">Italiano</option>
                       <option value="es">Español</option>
                       <option value="fr">Français</option>
                       <option value="de">Deutsch</option>
@@ -1310,21 +1306,21 @@ export default function FrontEndFunnel() {
                 {/* CTA URL */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    URL CTA
+                    CTA URL
                   </label>
                   <input
                     type="url"
                     value={swipeConfig.cta_url}
                     onChange={(e) => setSwipeConfig({ ...swipeConfig, cta_url: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
-                    placeholder="https://tuosito.com/checkout"
+                    placeholder="https://yoursite.com/checkout"
                   />
                 </div>
 
                 {/* Benefits */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Benefici
+                    Benefits
                   </label>
                   <div className="flex gap-2 mb-2">
                     <input
@@ -1333,7 +1329,7 @@ export default function FrontEndFunnel() {
                       onChange={(e) => setBenefitInput(e.target.value)}
                       onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addBenefit())}
                       className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none"
-                      placeholder="Aggiungi un beneficio..."
+                      placeholder="Add a benefit..."
                     />
                     <button
                       type="button"
@@ -1359,7 +1355,7 @@ export default function FrontEndFunnel() {
                       </span>
                     ))}
                     {swipeConfig.benefits.length === 0 && (
-                      <span className="text-sm text-gray-400 italic">Nessun beneficio</span>
+                      <span className="text-sm text-gray-400 italic">No benefits added</span>
                     )}
                   </div>
                 </div>
@@ -1372,7 +1368,7 @@ export default function FrontEndFunnel() {
                 onClick={() => setSwipeConfigModal({ isOpen: false, pageId: '', pageName: '', url: '' })}
                 className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
               >
-                Annulla
+                Cancel
               </button>
               <button
                 onClick={handleLaunchSwipeJob}
@@ -1380,7 +1376,7 @@ export default function FrontEndFunnel() {
                 className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
               >
                 <Wand2 className="w-4 h-4" />
-                Lancia Swipe Job
+                Launch Swipe Job
               </button>
             </div>
           </div>
@@ -1401,14 +1397,14 @@ export default function FrontEndFunnel() {
                   </h2>
                   {htmlPreviewModal.metadata && (
                     <p className="text-white/80 text-sm">
-                      Metodo: {htmlPreviewModal.metadata.method} | 
+                      Method: {htmlPreviewModal.metadata.method} | 
                       {htmlPreviewModal.metadata.length.toLocaleString()} chars | 
                       {htmlPreviewModal.metadata.duration.toFixed(2)}s
                     </p>
                   )}
                   {htmlPreviewModal.iframeSrc && (
                     <p className="text-white/80 text-sm">
-                      Risultato dal job pipeline
+                      Result from pipeline job
                     </p>
                   )}
                 </div>
@@ -1433,11 +1429,11 @@ export default function FrontEndFunnel() {
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(htmlPreviewModal.html);
-                      alert('HTML copiato negli appunti!');
+                      alert('HTML copied to clipboard!');
                     }}
                     className="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
                   >
-                    Copia HTML
+                    Copy HTML
                   </button>
                 )}
                 {htmlPreviewModal.iframeSrc && (
@@ -1448,7 +1444,7 @@ export default function FrontEndFunnel() {
                     className="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 flex items-center gap-1"
                   >
                     <ExternalLink className="w-3 h-3" />
-                    Apri in nuova tab
+                    Open in new tab
                   </a>
                 )}
               </div>
@@ -1480,14 +1476,14 @@ export default function FrontEndFunnel() {
                   }}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                 >
-                  Scarica HTML
+                  Download HTML
                 </button>
               )}
               <button
                 onClick={() => setHtmlPreviewModal({ isOpen: false, title: '', html: '', iframeSrc: '', metadata: null })}
                 className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
               >
-                Chiudi
+                Close
               </button>
             </div>
           </div>
@@ -1503,7 +1499,7 @@ export default function FrontEndFunnel() {
               <div className="flex items-center gap-3">
                 <FileText className="w-6 h-6 text-white" />
                 <h2 className="text-xl font-bold text-white">
-                  Analisi Funnel Step
+                  Funnel Step Analysis
                 </h2>
               </div>
               <button
@@ -1520,8 +1516,8 @@ export default function FrontEndFunnel() {
               {analysisModal.extractedData && (
                 <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                   <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                    <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">ESTRATTO</span>
-                    Dati dalla Pagina
+                    <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">EXTRACTED</span>
+                    Page Data
                   </h3>
                   <div className="space-y-3 text-sm">
                     {analysisModal.extractedData.headline && (
@@ -1550,7 +1546,7 @@ export default function FrontEndFunnel() {
                     )}
                     {analysisModal.extractedData.price && (
                       <div>
-                        <span className="font-medium text-gray-700">Prezzo:</span>
+                        <span className="font-medium text-gray-700">Price:</span>
                         <span className="ml-2 bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-sm font-bold">
                           {analysisModal.extractedData.price}
                         </span>
@@ -1564,7 +1560,7 @@ export default function FrontEndFunnel() {
               <div className="bg-white rounded-lg p-4 border border-gray-200">
                 <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
                   <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs">AI</span>
-                  Risultato Analisi
+                  Analysis Result
                 </h3>
                 <div className="prose prose-sm max-w-none">
                   <pre className="whitespace-pre-wrap text-gray-700 text-sm leading-relaxed font-sans bg-gray-50 p-4 rounded-lg">
@@ -1580,14 +1576,14 @@ export default function FrontEndFunnel() {
                 onClick={() => setAnalysisModal({ isOpen: false, pageId: '', result: null, extractedData: null })}
                 className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
               >
-                Chiudi
+                Close
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ==================== VISION ANALYSIS MODAL ==================== */}
+      {/* Vision Analysis Modal */}
       {visionModal.isOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
@@ -1597,7 +1593,7 @@ export default function FrontEndFunnel() {
                 <ImageIcon className="w-6 h-6 text-white" />
                 <div>
                   <h2 className="text-xl font-bold text-white">
-                    Analisi Vision AI
+                    AI Vision Analysis
                   </h2>
                   <p className="text-white/80 text-sm truncate max-w-md">
                     {visionModal.pageName} - {visionModal.sourceUrl}
@@ -1608,7 +1604,7 @@ export default function FrontEndFunnel() {
                 <button
                   onClick={() => fetchVisionJobs(visionModal.sourceUrl)}
                   className="p-2 text-white/80 hover:text-white hover:bg-white/20 rounded-lg transition-colors"
-                  title="Ricarica"
+                  title="Refresh"
                 >
                   <RefreshCw className={`w-5 h-5 ${visionLoading ? 'animate-spin' : ''}`} />
                 </button>
@@ -1632,7 +1628,7 @@ export default function FrontEndFunnel() {
               {visionLoading && !selectedVisionJob && (
                 <div className="flex flex-col items-center justify-center py-12">
                   <Loader2 className="w-12 h-12 text-purple-500 animate-spin mb-4" />
-                  <p className="text-gray-600">Caricamento analisi vision...</p>
+                  <p className="text-gray-600">Loading vision analysis...</p>
                 </div>
               )}
 
@@ -1641,7 +1637,7 @@ export default function FrontEndFunnel() {
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
                   <div className="flex items-center gap-2 text-red-700">
                     <XCircle className="w-5 h-5" />
-                    <span className="font-medium">Errore</span>
+                    <span className="font-medium">Error</span>
                   </div>
                   <p className="text-red-600 mt-1">{visionError}</p>
                 </div>
@@ -1651,11 +1647,11 @@ export default function FrontEndFunnel() {
               {!visionLoading && !visionError && visionJobs.length === 0 && (
                 <div className="text-center py-12">
                   <ImageIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">Nessuna analisi trovata</h3>
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">No analysis found</h3>
                   <p className="text-gray-500">
-                    Non sono state trovate analisi vision per questa pagina.
+                    No vision analysis found for this page.
                     <br />
-                    Lancia prima un job di swipe per generare l&apos;analisi.
+                    Launch a swipe job first to generate the analysis.
                   </p>
                 </div>
               )}
@@ -1664,7 +1660,7 @@ export default function FrontEndFunnel() {
               {visionJobs.length > 0 && (
                 <div className="mb-6">
                   <h3 className="text-sm font-medium text-gray-700 mb-3">
-                    Analisi disponibili ({visionJobs.length})
+                    Available analyses ({visionJobs.length})
                   </h3>
                   <div className="flex flex-wrap gap-2">
                     {visionJobs.map((job) => (
@@ -1688,7 +1684,7 @@ export default function FrontEndFunnel() {
                         ) : (
                           <Loader2 className="w-4 h-4 animate-spin" />
                         )}
-                        <span>{new Date(job.created_at).toLocaleString('it-IT', { 
+                        <span>{new Date(job.created_at).toLocaleString('en-US', { 
                           day: '2-digit', 
                           month: '2-digit', 
                           hour: '2-digit', 
@@ -1696,7 +1692,7 @@ export default function FrontEndFunnel() {
                         })}</span>
                         {job.total_sections_detected > 0 && (
                           <span className="bg-white/50 px-1.5 py-0.5 rounded text-xs">
-                            {job.total_sections_detected} sezioni
+                            {job.total_sections_detected} sections
                           </span>
                         )}
                       </button>
@@ -1713,12 +1709,12 @@ export default function FrontEndFunnel() {
                     <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                       <h4 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
                         <Eye className="w-4 h-4" />
-                        Screenshot Pagina
+                        Page Screenshot
                       </h4>
                       <div className="relative rounded-lg overflow-hidden border border-gray-300 bg-white">
                         <img
                           src={selectedVisionJob.screenshot_url}
-                          alt="Screenshot pagina"
+                          alt="Page screenshot"
                           className="w-full h-auto max-h-[400px] object-contain"
                         />
                       </div>
@@ -1730,7 +1726,7 @@ export default function FrontEndFunnel() {
                     <div className="bg-indigo-50 rounded-lg p-4 border border-indigo-200">
                       <h4 className="font-medium text-indigo-900 mb-3 flex items-center gap-2">
                         <Layers className="w-4 h-4" />
-                        Struttura Pagina
+                        Page Structure
                       </h4>
                       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                         {Object.entries(selectedVisionJob.page_structure).map(([key, value]) => (
@@ -1757,7 +1753,7 @@ export default function FrontEndFunnel() {
                       <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
                         <h4 className="font-medium text-gray-900 flex items-center gap-2">
                           <Layers className="w-4 h-4 text-purple-500" />
-                          Sezioni Rilevate ({selectedVisionJob.sections.length})
+                          Detected Sections ({selectedVisionJob.sections.length})
                         </h4>
                         <button
                           onClick={() => setExpandedSections(
@@ -1768,8 +1764,8 @@ export default function FrontEndFunnel() {
                           className="text-sm text-purple-600 hover:text-purple-800"
                         >
                           {expandedSections.length === selectedVisionJob.sections.length 
-                            ? 'Chiudi tutto' 
-                            : 'Espandi tutto'}
+                            ? 'Collapse all' 
+                            : 'Expand all'}
                         </button>
                       </div>
                       <div className="divide-y divide-gray-100">
@@ -1806,13 +1802,13 @@ export default function FrontEndFunnel() {
                               <div className="mt-3 ml-11 space-y-2">
                                 {section.text_preview && (
                                   <div className="bg-gray-50 rounded-lg p-3">
-                                    <p className="text-xs text-gray-500 mb-1">Anteprima Testo</p>
+                                    <p className="text-xs text-gray-500 mb-1">Text Preview</p>
                                     <p className="text-sm text-gray-700">{section.text_preview}</p>
                                   </div>
                                 )}
                                 {section.bounding_box && (
                                   <div className="text-xs text-gray-500">
-                                    Posizione: x={section.bounding_box.x}, y={section.bounding_box.y}, 
+                                    Position: x={section.bounding_box.x}, y={section.bounding_box.y}, 
                                     {section.bounding_box.width}x{section.bounding_box.height}px
                                   </div>
                                 )}
@@ -1830,7 +1826,7 @@ export default function FrontEndFunnel() {
                       <div className="px-4 py-3 border-b border-gray-200">
                         <h4 className="font-medium text-gray-900 flex items-center gap-2">
                           <ImageIcon className="w-4 h-4 text-blue-500" />
-                          Immagini Analizzate ({selectedVisionJob.images.length})
+                          Analyzed Images ({selectedVisionJob.images.length})
                         </h4>
                       </div>
                       <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1864,7 +1860,7 @@ export default function FrontEndFunnel() {
                     <div className="bg-green-50 rounded-lg p-4 border border-green-200">
                       <h4 className="font-medium text-green-900 mb-3 flex items-center gap-2">
                         <Lightbulb className="w-4 h-4" />
-                        Raccomandazioni AI
+                        AI Recommendations
                       </h4>
                       <ul className="space-y-2">
                         {selectedVisionJob.recommendations.map((rec, idx) => (
@@ -1884,7 +1880,7 @@ export default function FrontEndFunnel() {
                     <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                       <h4 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
                         <Code className="w-4 h-4" />
-                        Analisi Completa (Raw)
+                        Complete Analysis (Raw)
                       </h4>
                       <pre className="text-xs text-gray-600 whitespace-pre-wrap font-mono bg-white p-4 rounded-lg border border-gray-200 max-h-[300px] overflow-y-auto">
                         {selectedVisionJob.raw_analysis}
@@ -1903,7 +1899,7 @@ export default function FrontEndFunnel() {
                     Job ID: <code className="bg-gray-200 px-1 rounded">{selectedVisionJob.id.slice(0, 8)}...</code>
                     {selectedVisionJob.completed_at && (
                       <span className="ml-3">
-                        Completato: {new Date(selectedVisionJob.completed_at).toLocaleString('it-IT')}
+                        Completed: {new Date(selectedVisionJob.completed_at).toLocaleString('en-US')}
                       </span>
                     )}
                   </>
@@ -1918,7 +1914,7 @@ export default function FrontEndFunnel() {
                 }}
                 className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
               >
-                Chiudi
+                Close
               </button>
             </div>
           </div>

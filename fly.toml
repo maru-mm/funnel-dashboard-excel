@@ -1,0 +1,29 @@
+# fly.toml app configuration file generated for funnel-swiper-dashboard on 2026-02-12T15:50:53+01:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'funnel-swiper-dashboard'
+primary_region = 'fra'
+
+[build]
+
+[env]
+  PORT = '3000'
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'connections'
+    hard_limit = 25
+    soft_limit = 20
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'

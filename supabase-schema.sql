@@ -123,6 +123,30 @@ CREATE INDEX IF NOT EXISTS idx_post_purchase_pages_type ON post_purchase_pages(t
 CREATE INDEX IF NOT EXISTS idx_post_purchase_pages_created_at ON post_purchase_pages(created_at DESC);
 
 -- =====================================================
+-- FUNNEL CRAWL STEPS TABLE (Funnel Analyzer - step salvati)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS funnel_crawl_steps (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  funnel_name TEXT NOT NULL DEFAULT '',
+  funnel_tag TEXT,
+  entry_url TEXT NOT NULL,
+  step_index INT NOT NULL,
+  url TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  step_data JSONB NOT NULL DEFAULT '{}',
+  screenshot_base64 TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_funnel_crawl_steps_entry_url ON funnel_crawl_steps(entry_url);
+CREATE INDEX IF NOT EXISTS idx_funnel_crawl_steps_funnel_name ON funnel_crawl_steps(funnel_name);
+CREATE INDEX IF NOT EXISTS idx_funnel_crawl_steps_funnel_tag ON funnel_crawl_steps(funnel_tag);
+CREATE INDEX IF NOT EXISTS idx_funnel_crawl_steps_created_at ON funnel_crawl_steps(created_at DESC);
+
+ALTER TABLE funnel_crawl_steps ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all operations on funnel_crawl_steps" ON funnel_crawl_steps FOR ALL USING (true) WITH CHECK (true);
+
+-- =====================================================
 -- UPDATED_AT TRIGGER FUNCTION
 -- =====================================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()

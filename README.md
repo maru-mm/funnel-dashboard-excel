@@ -24,6 +24,14 @@ Dashboard per la gestione delle attività di swipe funnel con vista stile Excel.
 - Gestione prodotti
 - Nome, descrizione, prezzo, immagine
 
+### Funnel Analyzer (Visual Funnel Crawler)
+- **Layer 1 – Crawl**: Playwright naviga dall’URL di ingresso, screenshot full-page per ogni step, link/CTA/form, network e cookie.
+- **Layer 2 – Vision AI**: Ogni screenshot viene inviato a Claude o Gemini (vision) per estrarre: tipo pagina, headline, subheadline, copy, CTA, offerta, prezzi, urgenza, social proof, tech stack, tecniche di persuasione.
+
+Per l’analisi Vision, in `.env.local` imposta **una** delle due:
+- `ANTHROPIC_API_KEY` (per Claude)
+- `GEMINI_API_KEY` (per Gemini)
+
 ## Installazione
 
 ```bash

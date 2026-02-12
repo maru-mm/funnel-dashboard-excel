@@ -108,17 +108,17 @@ export default function PostPurchaseFunnel() {
         {/* Excel-style Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="excel-table">
+            <table className="excel-table text-sm">
               <thead>
                 <tr>
-                  <th className="w-12">#</th>
-                  <th className="min-w-[200px]">Nome Pagina</th>
-                  <th className="min-w-[180px]">Tipo</th>
-                  <th className="min-w-[150px]">Prodotto</th>
-                  <th className="min-w-[300px]">URL da Swipare</th>
-                  <th className="min-w-[120px]">Stato</th>
-                  <th className="min-w-[250px]">Risultato Swipe</th>
-                  <th className="min-w-[150px]">Azioni</th>
+                  <th className="w-10 px-2">#</th>
+                  <th className="min-w-[120px]">Page</th>
+                  <th className="min-w-[100px]">Type</th>
+                  <th className="min-w-[100px]">Product</th>
+                  <th className="min-w-[180px]">URL</th>
+                  <th className="w-20">Status</th>
+                  <th className="min-w-[120px]">Result</th>
+                  <th className="w-24">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -144,7 +144,7 @@ export default function PostPurchaseFunnel() {
                           onChange={(e) =>
                             updatePostPurchasePage(page.id, { name: e.target.value })
                           }
-                          className="font-medium"
+                          className="font-medium truncate"
                         />
                       </td>
 
@@ -175,8 +175,9 @@ export default function PostPurchaseFunnel() {
                               productId: e.target.value,
                             })
                           }
+                          className="truncate"
                         >
-                          <option value="">Seleziona...</option>
+                          <option value="">Product...</option>
                           {products.map((prod) => (
                             <option key={prod.id} value={prod.id}>
                               {prod.name}
@@ -187,7 +188,7 @@ export default function PostPurchaseFunnel() {
 
                       {/* URL to Swipe */}
                       <td>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-0.5">
                           <input
                             type="url"
                             value={page.urlToSwipe}
@@ -197,16 +198,16 @@ export default function PostPurchaseFunnel() {
                               })
                             }
                             placeholder="https://..."
-                            className="flex-1"
+                            className="flex-1 truncate"
                           />
                           {page.urlToSwipe && (
                             <a
                               href={page.urlToSwipe}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-blue-500 hover:text-blue-700 p-1"
+                              className="text-blue-500 hover:text-blue-700 p-0.5 flex-shrink-0"
                             >
-                              <ExternalLink className="w-4 h-4" />
+                              <ExternalLink className="w-3 h-3" />
                             </a>
                           )}
                         </div>
@@ -219,14 +220,14 @@ export default function PostPurchaseFunnel() {
 
                       {/* Swipe Result */}
                       <td>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                           {page.swipeStatus === 'completed' && (
-                            <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                            <CheckCircle className="w-3 h-3 text-green-500 flex-shrink-0" />
                           )}
                           {page.swipeStatus === 'failed' && (
-                            <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                            <XCircle className="w-3 h-3 text-red-500 flex-shrink-0" />
                           )}
-                          <span className="text-sm truncate max-w-[150px]" title={page.swipeResult || ''}>
+                          <span className="truncate max-w-[80px]" title={page.swipeResult || ''}>
                             {page.swipeResult || '-'}
                           </span>
                           {(page.swipedData || page.clonedData) && (
@@ -256,11 +257,10 @@ export default function PostPurchaseFunnel() {
                                   });
                                 }
                               }}
-                              className="flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 hover:bg-purple-200 rounded text-xs font-medium"
-                              title="Visualizza HTML swipato"
+                              className="p-1 bg-purple-100 text-purple-700 hover:bg-purple-200 rounded"
+                              title="Preview"
                             >
                               <Eye className="w-3 h-3" />
-                              Preview
                             </button>
                           )}
                         </div>
@@ -268,7 +268,7 @@ export default function PostPurchaseFunnel() {
 
                       {/* Actions */}
                       <td>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleLaunchSwipe(page.id)}
                             disabled={
@@ -277,7 +277,7 @@ export default function PostPurchaseFunnel() {
                               !page.urlToSwipe ||
                               !page.productId
                             }
-                            className={`flex items-center gap-1 px-3 py-1 rounded text-sm font-medium transition-colors ${
+                            className={`p-1 rounded transition-colors ${
                               loadingIds.includes(page.id) ||
                               page.swipeStatus === 'in_progress'
                                 ? 'bg-yellow-100 text-yellow-700'
@@ -285,26 +285,21 @@ export default function PostPurchaseFunnel() {
                                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                 : 'bg-green-100 text-green-700 hover:bg-green-200'
                             }`}
-                            title={!page.productId ? 'Seleziona prima un prodotto' : 'Lancia Swipe'}
+                            title={!page.productId ? 'Select product first' : 'Swipe'}
                           >
                             {loadingIds.includes(page.id) ||
                             page.swipeStatus === 'in_progress' ? (
-                              <>
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                Swipe...
-                              </>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
-                              <>
-                                <Play className="w-3 h-3" />
-                                Swipe
-                              </>
+                              <Play className="w-3.5 h-3.5" />
                             )}
                           </button>
                           <button
                             onClick={() => deletePostPurchasePage(page.id)}
                             className="p-1 text-red-500 hover:bg-red-50 rounded"
+                            title="Delete"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>

@@ -12,6 +12,8 @@ import type {
   PostPurchasePage,
   PostPurchasePageInsert,
   PostPurchasePageUpdate,
+  FunnelCrawlStepRow,
+  FunnelCrawlStepInsert,
 } from '@/types/database';
 
 // =====================================================
@@ -242,6 +244,102 @@ export async function deletePostPurchasePage(id: string): Promise<void> {
   
   if (error) {
     console.error('Error deleting post purchase page:', error);
+    throw error;
+  }
+}
+
+// =====================================================
+// FUNNEL CRAWL STEPS (Funnel Analyzer - salvataggio step)
+// =====================================================
+
+export async function createFunnelCrawlSteps(
+  entryUrl: string,
+  funnelName: string,
+  funnelTag: string | null,
+  steps: Array<{
+    stepIndex: number;
+    url: string;
+    title: string;
+    links: unknown;
+    ctaButtons: unknown;
+    forms: unknown;
+    networkRequests: unknown;
+    cookies: unknown;
+    domLength: number;
+    redirectFrom?: string;
+    timestamp: string;
+    screenshotBase64?: string;
+  }>
+): Promise<{ count: number; ids: string[] }> {
+  const rows: FunnelCrawlStepInsert[] = steps.map((s) => ({
+    funnel_name: funnelName.trim() || 'Senza nome',
+    funnel_tag: funnelTag?.trim() || null,
+    entry_url: entryUrl,
+    step_index: s.stepIndex,
+    url: s.url,
+    title: s.title || '',
+    step_data: {
+      links: s.links,
+      ctaButtons: s.ctaButtons,
+      forms: s.forms,
+      networkRequests: s.networkRequests,
+      cookies: s.cookies,
+      domLength: s.domLength,
+      redirectFrom: s.redirectFrom,
+      timestamp: s.timestamp,
+    },
+    screenshot_base64: s.screenshotBase64 ?? null,
+  }));
+
+  const { data, error } = await supabase
+    .from('funnel_crawl_steps')
+    .insert(rows)
+    .select('id');
+
+  if (error) {
+    console.error('Error creating funnel crawl steps:', error);
+    throw error;
+  }
+  return { count: data?.length ?? 0, ids: (data ?? []).map((r) => r.id) };
+}
+
+export async function fetchFunnelCrawlSteps(): Promise<FunnelCrawlStepRow[]> {
+  const { data, error } = await supabase
+    .from('funnel_crawl_steps')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.error('Error fetching funnel crawl steps:', error);
+    throw error;
+  }
+  return data ?? [];
+}
+
+export async function fetchFunnelCrawlStepsByFunnel(
+  entryUrl: string,
+  funnelName: string
+): Promise<FunnelCrawlStepRow[]> {
+  const { data, error } = await supabase
+    .from('funnel_crawl_steps')
+    .select('*')
+    .eq('entry_url', entryUrl)
+    .eq('funnel_name', funnelName)
+    .order('step_index', { ascending: true });
+  if (error) {
+    console.error('Error fetching funnel crawl steps by funnel:', error);
+    throw error;
+  }
+  return data ?? [];
+}
+
+export async function deleteFunnelCrawlStepsByFunnel(entryUrl: string, funnelName: string): Promise<void> {
+  const { error } = await supabase
+    .from('funnel_crawl_steps')
+    .delete()
+    .eq('entry_url', entryUrl)
+    .eq('funnel_name', funnelName);
+  if (error) {
+    console.error('Error deleting funnel crawl steps:', error);
     throw error;
   }
 }
