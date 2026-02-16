@@ -14,6 +14,7 @@ import {
   ScanSearch,
   GitBranch,
   MessageSquare,
+  HelpCircle,
 } from 'lucide-react';
 
 const menuItems = [
@@ -66,6 +67,11 @@ const menuItems = [
     name: 'My Products',
     href: '/products',
     icon: ShoppingBag,
+  },
+  {
+    name: 'Swipe Quiz',
+    href: '/swipe-quiz',
+    icon: HelpCircle,
   },
 ];
 
