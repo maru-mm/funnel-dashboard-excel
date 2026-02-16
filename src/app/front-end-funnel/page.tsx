@@ -3,8 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Header from '@/components/Header';
 import { useStore } from '@/store/useStore';
-import { fetchFunnelCrawlSteps, fetchAffiliateSavedFunnels } from '@/lib/supabase-operations';
-import { groupStepsByFunnel, type FunnelGroup } from '@/lib/funnel-groups';
+import { fetchAffiliateSavedFunnels } from '@/lib/supabase-operations';
 import type { AffiliateSavedFunnel } from '@/types/database';
 import {
   BUILT_IN_PAGE_TYPE_OPTIONS,
@@ -39,7 +38,6 @@ import {
   MessageSquare,
   FileStack,
   Target,
-  BookOpen,
   Copy,
   Globe,
 } from 'lucide-react';
@@ -204,13 +202,7 @@ export default function FrontEndFunnel() {
   // Jobs Monitor Panel
   const [showJobsPanel, setShowJobsPanel] = useState(false);
 
-  // Saved Funnels (da Funnel Analyzer)
-  const [savedFunnels, setSavedFunnels] = useState<FunnelGroup[]>([]);
-  const [savedFunnelsLoading, setSavedFunnelsLoading] = useState(false);
-  const [savedFunnelsError, setSavedFunnelsError] = useState<string | null>(null);
-  const [selectedSavedFunnelKey, setSelectedSavedFunnelKey] = useState<string | null>(null);
-
-  // Affiliate Saved Funnels (Quiz Funnels da Affiliate Browser Chat)
+  // Saved Funnels (da affiliate_saved_funnels)
   const [affiliateFunnels, setAffiliateFunnels] = useState<AffiliateSavedFunnel[]>([]);
   const [affiliateFunnelsLoading, setAffiliateFunnelsLoading] = useState(false);
   const [affiliateFunnelsError, setAffiliateFunnelsError] = useState<string | null>(null);
@@ -254,11 +246,6 @@ export default function FrontEndFunnel() {
   const [visionError, setVisionError] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<number[]>([]);
 
-  const selectedSavedFunnel = useMemo(
-    () => (selectedSavedFunnelKey ? savedFunnels.find((f) => f.key === selectedSavedFunnelKey) : null),
-    [selectedSavedFunnelKey, savedFunnels]
-  );
-
   const selectedAffiliateFunnel = useMemo(
     () => (selectedAffiliateFunnelId ? affiliateFunnels.find((f) => f.id === selectedAffiliateFunnelId) : null),
     [selectedAffiliateFunnelId, affiliateFunnels]
@@ -270,19 +257,6 @@ export default function FrontEndFunnel() {
     if (Array.isArray(raw)) return raw as AffiliateFunnelStep[];
     return [];
   }, [selectedAffiliateFunnel]);
-
-  const fetchSavedFunnels = useCallback(async () => {
-    setSavedFunnelsLoading(true);
-    setSavedFunnelsError(null);
-    try {
-      const steps = await fetchFunnelCrawlSteps();
-      setSavedFunnels(groupStepsByFunnel(steps));
-    } catch (err) {
-      setSavedFunnelsError(err instanceof Error ? err.message : 'Errore caricamento funnel');
-    } finally {
-      setSavedFunnelsLoading(false);
-    }
-  }, []);
 
   const fetchAffiliateData = useCallback(async () => {
     setAffiliateFunnelsLoading(true);
@@ -297,23 +271,10 @@ export default function FrontEndFunnel() {
     }
   }, []);
 
-  // Load saved funnels and affiliate funnels on page load
+  // Load saved funnels on page load
   useEffect(() => {
-    fetchSavedFunnels();
     fetchAffiliateData();
-  }, [fetchSavedFunnels, fetchAffiliateData]);
-
-  const handleUseStepForSwipe = (step: { step_index: number; url: string; title: string }) => {
-    addFunnelPage({
-      name: step.title ? `Step ${step.step_index}: ${step.title}`.slice(0, 80) : `Step ${step.step_index}`,
-      pageType: 'landing',
-      productId: products[0]?.id || '',
-      urlToSwipe: step.url,
-      prompt: '',
-      swipeStatus: 'pending',
-      feedback: '',
-    });
-  };
+  }, [fetchAffiliateData]);
 
   const handleUseAffiliateStepForSwipe = (step: AffiliateFunnelStep, funnelName: string) => {
     const stepType = step.step_type || 'landing';
@@ -584,7 +545,7 @@ export default function FrontEndFunnel() {
         const response = await fetch('/api/clone-funnel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, cloneMode: 'identical' }),
+          body: JSON.stringify({ url, cloneMode: 'identical', userId: '00000000-0000-0000-0000-000000000001' }),
         });
         const data = await response.json();
         if (!response.ok || data.error) throw new Error(data.error || 'Clone failed');
@@ -975,7 +936,7 @@ export default function FrontEndFunnel() {
               <span className="text-gray-500">
                 {(funnelPages || []).length} pages
               </span>
-              {/* Saved Funnels Dropdown */}
+              {/* Saved Funnels Dropdown (da affiliate_saved_funnels) */}
               <div className="flex items-center gap-2">
                 <label htmlFor="saved-funnel-select" className="text-sm font-medium text-gray-700 flex items-center gap-1">
                   <FileStack className="w-4 h-4 text-amber-500" />
@@ -983,52 +944,17 @@ export default function FrontEndFunnel() {
                 </label>
                 <select
                   id="saved-funnel-select"
-                  value={selectedSavedFunnelKey ?? ''}
-                  onChange={(e) => setSelectedSavedFunnelKey(e.target.value || null)}
-                  className="min-w-[220px] px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm bg-white"
-                >
-                  <option value="">— Seleziona un funnel —</option>
-                  {savedFunnelsLoading ? (
-                    <option disabled>Caricamento...</option>
-                  ) : (
-                    savedFunnels.map((group) => (
-                      <option key={group.key} value={group.key}>
-                        {group.funnelName} ({group.steps.length} step)
-                      </option>
-                    ))
-                  )}
-                </select>
-                {savedFunnels.length > 0 && (
-                  <button
-                    onClick={() => fetchSavedFunnels()}
-                    disabled={savedFunnelsLoading}
-                    className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                    title="Aggiorna funnel"
-                  >
-                    <RefreshCw className={`w-4 h-4 ${savedFunnelsLoading ? 'animate-spin' : ''}`} />
-                  </button>
-                )}
-              </div>
-
-              {/* Affiliate Saved Funnels (Quiz Funnels) Dropdown */}
-              <div className="flex items-center gap-2">
-                <label htmlFor="affiliate-funnel-select" className="text-sm font-medium text-gray-700 flex items-center gap-1">
-                  <BookOpen className="w-4 h-4 text-purple-500" />
-                  Quiz Funnel
-                </label>
-                <select
-                  id="affiliate-funnel-select"
                   value={selectedAffiliateFunnelId ?? ''}
                   onChange={(e) => setSelectedAffiliateFunnelId(e.target.value || null)}
-                  className="min-w-[220px] px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white"
+                  className="min-w-[260px] px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm bg-white"
                 >
-                  <option value="">— Seleziona quiz funnel —</option>
+                  <option value="">— Seleziona un funnel —</option>
                   {affiliateFunnelsLoading ? (
                     <option disabled>Caricamento...</option>
                   ) : (
                     affiliateFunnels.map((af) => (
                       <option key={af.id} value={af.id}>
-                        {af.funnel_name}{af.brand_name ? ` (${af.brand_name})` : ''} — {af.total_steps} step
+                        {af.funnel_name}{af.brand_name ? ` (${af.brand_name})` : ''} — {af.funnel_type.replace(/_/g, ' ')} — {af.total_steps} step
                       </option>
                     ))
                   )}
@@ -1037,8 +963,8 @@ export default function FrontEndFunnel() {
                   <button
                     onClick={() => fetchAffiliateData()}
                     disabled={affiliateFunnelsLoading}
-                    className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
-                    title="Aggiorna quiz funnel"
+                    className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                    title="Aggiorna funnel"
                   >
                     <RefreshCw className={`w-4 h-4 ${affiliateFunnelsLoading ? 'animate-spin' : ''}`} />
                   </button>
@@ -1234,60 +1160,12 @@ export default function FrontEndFunnel() {
             </div>
           )}
 
-          {/* Pagine del funnel selezionato - appare quando scegli dalla tendina */}
-          {selectedSavedFunnelKey && selectedSavedFunnel && (
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                <Target className="w-4 h-4 text-amber-600" />
-                Pagine di &quot;{selectedSavedFunnel.funnelName}&quot;
-              </h3>
-              <div className="rounded-lg border border-amber-200 bg-amber-50/30 overflow-hidden">
-                <div className="p-3 space-y-2 max-h-72 overflow-y-auto">
-                  {selectedSavedFunnel.steps.map((step) => (
-                    <div
-                      key={step.id}
-                      className="flex items-center gap-3 p-2 rounded-lg bg-white border border-gray-100 hover:border-amber-200 transition-colors"
-                    >
-                      {step.screenshot_base64 && (
-                        <img
-                          src={`data:image/png;base64,${step.screenshot_base64}`}
-                          alt={`Step ${step.step_index}`}
-                          className="w-12 h-12 object-cover rounded shrink-0"
-                        />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">
-                          Step {step.step_index}: {step.title || step.url}
-                        </p>
-                        <a
-                          href={step.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-amber-600 hover:underline truncate block"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {step.url}
-                        </a>
-                      </div>
-                      <button
-                        onClick={() => handleUseStepForSwipe(step)}
-                        className="shrink-0 px-3 py-1.5 text-xs font-medium bg-amber-500 text-white rounded hover:bg-amber-600 transition-colors flex items-center gap-1"
-                      >
-                        <Wand2 className="w-3 h-3" />
-                        Usa per swipe
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-          {/* Pagine del quiz funnel affiliato selezionato */}
+          {/* Pagine del funnel selezionato */}
           {selectedAffiliateFunnelId && selectedAffiliateFunnel && (
             <div className="mt-4 pt-4 border-t border-gray-200">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-purple-600" />
+                  <Target className="w-4 h-4 text-amber-600" />
                   Step di &quot;{selectedAffiliateFunnel.funnel_name}&quot;
                   {selectedAffiliateFunnel.brand_name && (
                     <span className="text-xs font-normal text-gray-500">({selectedAffiliateFunnel.brand_name})</span>
@@ -1295,7 +1173,7 @@ export default function FrontEndFunnel() {
                 </h3>
                 <div className="flex items-center gap-2">
                   {selectedAffiliateFunnel.funnel_type && (
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
                       {selectedAffiliateFunnel.funnel_type.replace(/_/g, ' ')}
                     </span>
                   )}
@@ -1307,7 +1185,7 @@ export default function FrontEndFunnel() {
                   <button
                     onClick={handleImportAllAffiliateSteps}
                     disabled={affiliateFunnelSteps.length === 0}
-                    className="px-3 py-1.5 text-xs font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-1 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    className="px-3 py-1.5 text-xs font-medium bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors flex items-center gap-1 disabled:bg-gray-300 disabled:cursor-not-allowed"
                   >
                     <Plus className="w-3 h-3" />
                     Importa tutti ({affiliateFunnelSteps.length})
@@ -1317,7 +1195,7 @@ export default function FrontEndFunnel() {
 
               {/* Analysis summary */}
               {selectedAffiliateFunnel.analysis_summary && (
-                <p className="text-xs text-gray-600 mb-3 bg-purple-50 rounded-lg p-2 border border-purple-100">
+                <p className="text-xs text-gray-600 mb-3 bg-amber-50 rounded-lg p-2 border border-amber-100">
                   {selectedAffiliateFunnel.analysis_summary}
                 </p>
               )}
@@ -1338,7 +1216,7 @@ export default function FrontEndFunnel() {
                 </div>
               )}
 
-              <div className="rounded-lg border border-purple-200 bg-purple-50/30 overflow-hidden">
+              <div className="rounded-lg border border-amber-200 bg-amber-50/30 overflow-hidden">
                 <div className="p-3 space-y-2 max-h-80 overflow-y-auto">
                   {affiliateFunnelSteps.length === 0 ? (
                     <p className="text-sm text-gray-500 text-center py-4">
@@ -1348,10 +1226,9 @@ export default function FrontEndFunnel() {
                     affiliateFunnelSteps.map((step, idx) => (
                       <div
                         key={idx}
-                        className="flex items-center gap-3 p-2.5 rounded-lg bg-white border border-gray-100 hover:border-purple-200 transition-colors"
+                        className="flex items-center gap-3 p-2.5 rounded-lg bg-white border border-gray-100 hover:border-amber-200 transition-colors"
                       >
-                        {/* Step index badge */}
-                        <span className="w-7 h-7 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold shrink-0">
+                        <span className="w-7 h-7 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-xs font-bold shrink-0">
                           {step.step_index}
                         </span>
 
@@ -1389,7 +1266,7 @@ export default function FrontEndFunnel() {
                               href={step.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-purple-600 hover:underline truncate block"
+                              className="text-xs text-amber-600 hover:underline truncate block"
                               onClick={(e) => e.stopPropagation()}
                             >
                               {step.url}
@@ -1405,7 +1282,7 @@ export default function FrontEndFunnel() {
                         <button
                           onClick={() => handleUseAffiliateStepForSwipe(step, selectedAffiliateFunnel.funnel_name)}
                           disabled={!step.url}
-                          className="shrink-0 px-3 py-1.5 text-xs font-medium bg-purple-500 text-white rounded hover:bg-purple-600 transition-colors flex items-center gap-1 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                          className="shrink-0 px-3 py-1.5 text-xs font-medium bg-amber-500 text-white rounded hover:bg-amber-600 transition-colors flex items-center gap-1 disabled:bg-gray-300 disabled:cursor-not-allowed"
                         >
                           <Wand2 className="w-3 h-3" />
                           Usa per swipe
@@ -1418,25 +1295,17 @@ export default function FrontEndFunnel() {
             </div>
           )}
 
-          {savedFunnelsError && (
-            <div className="mt-4 pt-4 border-t border-gray-200 flex items-center gap-2 text-red-600 text-sm">
-              {savedFunnelsError}
-              <button onClick={fetchSavedFunnels} className="text-amber-600 hover:underline">
-                Riprova
-              </button>
-            </div>
-          )}
           {affiliateFunnelsError && (
             <div className="mt-4 pt-4 border-t border-gray-200 flex items-center gap-2 text-red-600 text-sm">
               {affiliateFunnelsError}
-              <button onClick={fetchAffiliateData} className="text-purple-600 hover:underline">
+              <button onClick={fetchAffiliateData} className="text-amber-600 hover:underline">
                 Riprova
               </button>
             </div>
           )}
-          {!savedFunnelsLoading && !savedFunnelsError && savedFunnels.length === 0 && (
+          {!affiliateFunnelsLoading && !affiliateFunnelsError && affiliateFunnels.length === 0 && (
             <p className="mt-4 pt-4 border-t border-gray-200 text-gray-500 text-sm">
-              Nessun funnel salvato. Usa il <a href="/funnel-analyzer" className="text-amber-600 hover:underline">Funnel Analyzer</a> per crawllare e salvare un funnel.
+              Nessun funnel salvato. Usa l&apos;<a href="/affiliate-browser-chat" className="text-amber-600 hover:underline">Affiliate Browser Chat</a> per analizzare e salvare funnel.
             </p>
           )}
         </div>
@@ -1737,56 +1606,6 @@ export default function FrontEndFunnel() {
                       {/* Actions */}
                       <td>
                         <div className="flex items-center gap-1">
-                          {/* Analyze Button */}
-                          <button
-                            onClick={() => handleAnalyze(page)}
-                            disabled={
-                              analyzingIds.includes(page.id) ||
-                              page.analysisStatus === 'in_progress' ||
-                              !page.urlToSwipe
-                            }
-                            className={`p-1 rounded transition-colors ${
-                              analyzingIds.includes(page.id) ||
-                              page.analysisStatus === 'in_progress'
-                                ? 'bg-purple-100 text-purple-700'
-                                : !page.urlToSwipe
-                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-                            }`}
-                            title="Analyze"
-                          >
-                            {analyzingIds.includes(page.id) ||
-                            page.analysisStatus === 'in_progress' ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Search className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                          {/* Swipe Button */}
-                          <button
-                            onClick={() => openSwipeConfig(page)}
-                            disabled={
-                              loadingIds.includes(page.id) ||
-                              page.swipeStatus === 'in_progress' ||
-                              !page.urlToSwipe
-                            }
-                            className={`p-1 rounded transition-colors ${
-                              loadingIds.includes(page.id) ||
-                              page.swipeStatus === 'in_progress'
-                                ? 'bg-yellow-100 text-yellow-700'
-                                : !page.urlToSwipe
-                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                : 'bg-green-100 text-green-700 hover:bg-green-200'
-                            }`}
-                            title="Swipe"
-                          >
-                            {loadingIds.includes(page.id) ||
-                            page.swipeStatus === 'in_progress' ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Wand2 className="w-3.5 h-3.5" />
-                            )}
-                          </button>
                           {/* Clone Button (smooth-responder) */}
                           <button
                             onClick={() => openCloneModal(page)}
@@ -1808,19 +1627,6 @@ export default function FrontEndFunnel() {
                             ) : (
                               <Copy className="w-3.5 h-3.5" />
                             )}
-                          </button>
-                          {/* Vision Button */}
-                          <button
-                            onClick={() => openVisionModal(page)}
-                            disabled={!page.urlToSwipe}
-                            className={`p-1 rounded transition-colors ${
-                              !page.urlToSwipe
-                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                            }`}
-                            title="Vision"
-                          >
-                            <ImageIcon className="w-3.5 h-3.5" />
                           </button>
                           {/* Delete Button */}
                           <button
@@ -2057,8 +1863,8 @@ export default function FrontEndFunnel() {
 
       {/* HTML Preview Modal */}
       {htmlPreviewModal.isOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-1">
+          <div className="bg-white rounded-xl shadow-2xl w-[98vw] h-[98vh] overflow-hidden flex flex-col">
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-blue-600 to-cyan-600">
               <div className="flex items-center gap-3">
