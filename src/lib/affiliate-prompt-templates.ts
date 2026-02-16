@@ -387,6 +387,42 @@ Fornisci un audit completo con:
     schedulable: false,
     tags: ['checkout', 'optimization', 'audit'],
   },
+  {
+    id: 'quiz-funnel-cro-mapping',
+    title: 'Quiz Funnel CRO Mapping — Report Completo',
+    description: 'Naviga un intero quiz funnel come esperto CRO/UX: mappa ogni step, estrai dati tecnici, contenuto e fornisci un report con analisi UX finale.',
+    category: 'funnel_analysis',
+    icon: 'ClipboardList',
+    prompt: `Ruolo: Agisci come un Esperto di Conversion Rate Optimization (CRO) e Analista UX.
+
+Obiettivo: Naviga l'intero quiz funnel partendo dalla URL: [INSERISCI LINK QUI]. Il tuo compito è mappare ogni singolo step, estrarre i dati tecnici e di contenuto e fornirmi un report finale.
+
+Istruzioni di Navigazione:
+- Accedi alla landing page e identifica il pulsante di inizio.
+- Procedi nel quiz rispondendo in modo coerente (se ci sono opzioni multiple, scegli sempre la prima o quella più generica per avanzare).
+- Per ogni schermata che incontri, cattura i dati richiesti nel report.
+- Continua fino alla pagina di ringraziamento (Thank You Page) o alla pagina dei risultati/lead magnet.
+
+Formato del Report Richiesto:
+Per ogni step del funnel, crea una tabella o un elenco che includa:
+1. URL della pagina (il link esatto visibile nel browser)
+2. Titolo/Domanda (il testo principale della domanda)
+3. Tipo di Input (es. scelta multipla, testo libero, barra di progressione)
+4. Opzioni di Risposta (elenca le risposte disponibili)
+5. Descrizione Elementi (presenza di immagini, video, icone o timer)
+
+Analisi Finale:
+Concludi con una breve sintesi sulla struttura del quiz (es: "Funnel lineare di 5 step con raccolta lead finale via email") e commenta la fluidità dell'esperienza utente.
+
+Consigli Tecnici per Browser Use:
+- Gestione dei Lead: Se il quiz richiede un'email per procedere, usa un'email fittizia (es. test@example.com).
+- Selettori Dinamici: Alcuni quiz caricano le domande senza cambiare l'URL (usando JavaScript). Attendi il caricamento del DOM dopo ogni clic e descrivi lo stato visivo anche se l'URL rimane invariato.
+- Screenshot: Scatta uno screenshot per ogni step per documentare il design oltre al semplice testo.`,
+    startUrl: '',
+    maxTurns: 200,
+    schedulable: false,
+    tags: ['quiz', 'funnel', 'cro', 'ux', 'mapping', 'report'],
+  },
 
   // ===== CONTENT RESEARCH =====
   {

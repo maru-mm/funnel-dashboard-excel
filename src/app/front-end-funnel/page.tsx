@@ -42,6 +42,25 @@ import {
   Globe,
 } from 'lucide-react';
 
+// Helper: inject <base href> into cloned HTML so relative URLs resolve correctly in iframe preview
+function injectBaseHref(html: string, originalUrl: string): string {
+  try {
+    const base = new URL(originalUrl);
+    const baseHref = `${base.origin}/`;
+    const baseTag = `<base href="${baseHref}" target="_blank">`;
+    if (html.includes('<head>')) {
+      return html.replace('<head>', `<head>${baseTag}`);
+    } else if (/<head\s/.test(html)) {
+      return html.replace(/<head([^>]*)>/, `<head$1>${baseTag}`);
+    } else if (html.includes('<html')) {
+      return html.replace(/<html([^>]*)>/, `<html$1><head>${baseTag}</head>`);
+    }
+    return baseTag + html;
+  } catch {
+    return html;
+  }
+}
+
 // Type for steps inside affiliate_saved_funnels.steps (JSONB)
 interface AffiliateFunnelStep {
   step_index: number;
@@ -550,11 +569,12 @@ export default function FrontEndFunnel() {
         const data = await response.json();
         if (!response.ok || data.error) throw new Error(data.error || 'Clone failed');
 
+        const clonedHtml = injectBaseHref(data.content, url);
         updateFunnelPage(pageId, {
           swipeStatus: 'completed',
           swipeResult: `Clone OK (${(data.content?.length || 0).toLocaleString()} chars)`,
           clonedData: {
-            html: data.content,
+            html: clonedHtml,
             title: pageName,
             method_used: 'identical',
             content_length: data.content?.length || 0,
@@ -566,7 +586,7 @@ export default function FrontEndFunnel() {
         setHtmlPreviewModal({
           isOpen: true,
           title: `Clone: ${pageName}`,
-          html: data.content,
+          html: clonedHtml,
           iframeSrc: '',
           metadata: { method: 'identical', length: data.content?.length || 0, duration: 0 },
         });
@@ -627,11 +647,12 @@ export default function FrontEndFunnel() {
             const textsProcessed = processData.textsProcessed || totalTexts;
             setCloneProgress(null);
 
+            const rewrittenHtml = injectBaseHref(processData.content, url);
             updateFunnelPage(pageId, {
               swipeStatus: 'completed',
               swipeResult: `Rewrite OK (${replacements}/${textsProcessed} texts)`,
               swipedData: {
-                html: processData.content,
+                html: rewrittenHtml,
                 originalTitle: pageName,
                 newTitle: `Rewrite: ${pageName}`,
                 originalLength: 0,
@@ -646,7 +667,7 @@ export default function FrontEndFunnel() {
             setHtmlPreviewModal({
               isOpen: true,
               title: `Rewrite: ${pageName}`,
-              html: processData.content,
+              html: rewrittenHtml,
               iframeSrc: '',
               metadata: { method: 'rewrite', length: processData.content?.length || 0, duration: 0 },
             });
@@ -693,11 +714,12 @@ export default function FrontEndFunnel() {
         if (!response.ok || data.error) throw new Error(data.error || 'Translate failed');
 
         setCloneProgress(null);
+        const translatedHtml = injectBaseHref(data.content, url);
         updateFunnelPage(pageId, {
           swipeStatus: 'completed',
           swipeResult: `Translated (${data.textsTranslated || 0} texts → ${data.targetLanguage})`,
           swipedData: {
-            html: data.content,
+            html: translatedHtml,
             originalTitle: pageName,
             newTitle: `${data.targetLanguage}: ${pageName}`,
             originalLength: data.originalHtmlSize || 0,
@@ -712,7 +734,7 @@ export default function FrontEndFunnel() {
         setHtmlPreviewModal({
           isOpen: true,
           title: `${data.targetLanguage}: ${pageName}`,
-          html: data.content,
+          html: translatedHtml,
           iframeSrc: '',
           metadata: { method: 'translate', length: data.finalHtmlSize || 0, duration: 0 },
         });
@@ -1941,6 +1963,19 @@ export default function FrontEndFunnel() {
 
             {/* Modal Footer */}
             <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
+              {htmlPreviewModal.html && (
+                <button
+                  onClick={() => {
+                    const blob = new Blob([htmlPreviewModal.html], { type: 'text/html' });
+                    const blobUrl = URL.createObjectURL(blob);
+                    window.open(blobUrl, '_blank');
+                  }}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-2"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Apri in Nuova Finestra
+                </button>
+              )}
               {htmlPreviewModal.html && (
                 <button
                   onClick={() => {
