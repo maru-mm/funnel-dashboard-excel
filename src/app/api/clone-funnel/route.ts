@@ -296,32 +296,28 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // REWRITE EXTRACT PHASE: render with Playwright first, then send rendered HTML to Edge Function
+    // REWRITE EXTRACT PHASE: render with Playwright, extract texts locally, save to Supabase DB
     if (cloneMode === 'rewrite' && body.phase === 'extract' && url) {
       console.log(`🔄 Rewrite EXTRACT con Playwright: ${url}`);
 
       if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-        return NextResponse.json(
-          { error: 'Supabase non configurato.' },
-          { status: 500 }
-        );
+        return NextResponse.json({ error: 'Supabase non configurato.' }, { status: 500 });
       }
 
       try {
-        // Step 1: Render the page with Playwright to get full DOM
+        // Step 1: Render the page with Playwright
         const browser = await getBrowser();
         const context = await browser.newContext({
           userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           viewport: { width: 1440, height: 900 },
           ignoreHTTPSErrors: true,
         });
-        const page = await context.newPage();
+        const pwPage = await context.newPage();
 
-        await page.goto(url, { waitUntil: 'load', timeout: 20000 });
-        await page.waitForTimeout(3000);
+        await pwPage.goto(url, { waitUntil: 'load', timeout: 20000 });
+        await pwPage.waitForTimeout(3000);
 
-        // Scroll to trigger lazy loading
-        await page.evaluate(async () => {
+        await pwPage.evaluate(async () => {
           const step = window.innerHeight;
           const max = document.body.scrollHeight;
           for (let y = 0; y < max; y += step) {
@@ -330,48 +326,225 @@ export async function POST(request: NextRequest) {
           }
           window.scrollTo(0, 0);
         });
-        await page.waitForTimeout(1500);
+        await pwPage.waitForTimeout(1500);
 
-        // Get rendered HTML (full DOM after JS execution)
-        const renderedHTML = await page.content();
-        await context.close();
+        // Step 2: Extract texts directly from the rendered DOM via Playwright
+        const extractResult = await pwPage.evaluate(() => {
+          const skipTags: Record<string, boolean> = {
+            SCRIPT:true, STYLE:true, NOSCRIPT:true, IFRAME:true, SVG:true, META:true, LINK:true, BR:true, HR:true, IMG:true, INPUT:true, SELECT:true, TEXTAREA:true
+          };
+          const texts: Array<{
+            index: number; originalText: string; tagName: string; fullTag: string;
+            classes: string; attributes: string; context: string; position: number; rawText?: string;
+          }> = [];
+          let idx = 0;
 
-        console.log(`✅ Playwright rendered: ${renderedHTML.length} chars`);
+          // Extract visible text from all elements
+          const allEls = document.body.querySelectorAll('*');
+          const extracted = new Set<string>();
 
-        // Step 2: Send rendered HTML to Edge Function with a special flag
-        // The Edge Function will use this HTML instead of fetching the URL
-        const edgeFunctionUrl = `${SUPABASE_URL}/functions/v1/smooth-responder`;
-        const edgeBody = {
-          ...body,
-          // Pass rendered HTML so Edge Function doesn't need to fetch
-          renderedHtml: renderedHTML,
-        };
+          allEls.forEach((el) => {
+            if (skipTags[el.tagName]) return;
+            const rect = el.getBoundingClientRect();
+            if (rect.width < 5 || rect.height < 5) return;
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
 
-        const response = await fetch(edgeFunctionUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'apikey': SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(edgeBody),
+            // Get direct text content (not from children)
+            let directText = '';
+            el.childNodes.forEach(node => {
+              if (node.nodeType === 3) directText += node.textContent || '';
+            });
+            directText = directText.replace(/\s+/g, ' ').trim();
+
+            if (directText.length < 2 || !directText.match(/[a-zA-Z]/)) return;
+            // Skip duplicates and code-like content
+            if (extracted.has(directText)) return;
+            if (directText.includes('{') || directText.includes('}') || directText.includes('=>')) return;
+            if (directText.startsWith('http') || directText.startsWith('//')) return;
+
+            extracted.add(directText);
+            const tag = el.tagName.toLowerCase();
+            const cls = el.getAttribute('class') || '';
+            const attrs = Array.from(el.attributes).map(a => `${a.name}="${a.value}"`).join(' ').substring(0, 200);
+
+            texts.push({
+              index: idx++,
+              originalText: directText,
+              tagName: tag,
+              fullTag: `<${tag}${cls ? ` class="${cls}"` : ''}>`,
+              classes: cls,
+              attributes: attrs,
+              context: tag,
+              position: Math.round(rect.top),
+            });
+          });
+
+          // Also extract alt/title/placeholder attributes
+          document.querySelectorAll('[alt],[title],[placeholder],[aria-label]').forEach(el => {
+            ['alt', 'title', 'placeholder', 'aria-label'].forEach(attr => {
+              const val = el.getAttribute(attr);
+              if (val && val.length >= 3 && val.match(/[a-zA-Z]/) && !extracted.has(val) && !val.startsWith('http')) {
+                extracted.add(val);
+                texts.push({
+                  index: idx++,
+                  originalText: val,
+                  tagName: '',
+                  fullTag: `${attr}="${val}"`,
+                  classes: '',
+                  attributes: `${attr}="${val}"`,
+                  context: `attr:${attr}`,
+                  position: 0,
+                });
+              }
+            });
+          });
+
+          return texts;
         });
 
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          const text = await response.text();
-          return NextResponse.json(
-            { error: `Edge function error (${response.status}): ${text.substring(0, 300)}` },
-            { status: response.status }
-          );
+        // Step 2b: Get clean HTML with CSS inlined and URLs fixed (same logic as cloneWithBrowser)
+        const renderedHTML = await pwPage.evaluate((pageUrl: string) => {
+          function abs(relative: string): string {
+            if (!relative || relative.startsWith('data:') || relative.startsWith('blob:') ||
+                relative.startsWith('#') || relative.startsWith('mailto:') || relative.startsWith('tel:') ||
+                relative.startsWith('javascript:')) return relative;
+            if (relative.startsWith('http://') || relative.startsWith('https://')) return relative;
+            try { return new URL(relative, pageUrl).href; } catch { return relative; }
+          }
+
+          // Collect all CSS from loaded stylesheets
+          const allCss: string[] = [];
+          for (const sheet of Array.from(document.styleSheets)) {
+            try {
+              const rules = Array.from(sheet.cssRules || []);
+              let cssText = rules.map(r => r.cssText).join('\n');
+              cssText = cssText.replace(/url\(\s*["']?(?!data:|https?:|blob:)([^"')]+)["']?\s*\)/gi, (_m: string, u: string) => {
+                const baseUrl = sheet.href || pageUrl;
+                try { return `url("${new URL(u.trim(), baseUrl).href}")`; } catch { return `url("${u}")`; }
+              });
+              if (cssText.trim()) allCss.push(cssText);
+            } catch { /* CORS - skip */ }
+          }
+
+          const docClone = document.documentElement.cloneNode(true) as HTMLElement;
+          // Remove scripts
+          docClone.querySelectorAll('script').forEach(s => s.remove());
+          // Remove event handlers
+          docClone.querySelectorAll('*').forEach(el => {
+            Array.from(el.attributes).forEach(attr => {
+              if (attr.name.startsWith('on')) el.removeAttribute(attr.name);
+            });
+          });
+          // Remove stylesheet links (CSS is inlined)
+          docClone.querySelectorAll('link[rel="stylesheet"]').forEach(l => l.remove());
+          // Fix all URLs to absolute
+          docClone.querySelectorAll('[src],[href],[poster],[data-src],[data-lazy-src],[data-original],[data-bg],[action]').forEach(el => {
+            ['src', 'href', 'poster', 'data-src', 'data-lazy-src', 'data-original', 'data-bg', 'action'].forEach(attr => {
+              const val = el.getAttribute(attr);
+              if (val && !val.startsWith('data:') && !val.startsWith('blob:') && !val.startsWith('#') && !val.startsWith('mailto:')) {
+                el.setAttribute(attr, abs(val));
+              }
+            });
+            const srcset = el.getAttribute('srcset');
+            if (srcset) {
+              el.setAttribute('srcset', srcset.split(',').map((e: string) => {
+                const p = e.trim().split(/\s+/); if (p[0]) p[0] = abs(p[0]); return p.join(' ');
+              }).join(', '));
+            }
+          });
+          // Fix inline style url()
+          docClone.querySelectorAll('[style]').forEach(el => {
+            const s = el.getAttribute('style') || '';
+            if (s.includes('url(')) {
+              el.setAttribute('style', s.replace(/url\(\s*["']?(?!data:|https?:|blob:)([^"')]+)["']?\s*\)/gi,
+                (_m: string, u: string) => `url("${abs(u.trim())}")`));
+            }
+          });
+          // Inject consolidated CSS
+          const head = docClone.querySelector('head');
+          if (head && allCss.length > 0) {
+            head.querySelectorAll('style').forEach(s => s.remove());
+            const styleEl = document.createElement('style');
+            styleEl.textContent = allCss.join('\n\n');
+            const after = head.querySelector('meta[charset]')?.nextSibling || head.firstChild;
+            if (after) head.insertBefore(styleEl, after); else head.appendChild(styleEl);
+          }
+          return '<!DOCTYPE html>\n' + docClone.outerHTML;
+        }, url);
+
+        await context.close();
+
+        console.log(`✅ Playwright: ${renderedHTML.length} chars (CSS inlined), ${extractResult.length} testi estratti`);
+
+        if (extractResult.length === 0) {
+          return NextResponse.json({ error: 'Nessun testo trovato nella pagina renderizzata.' }, { status: 400 });
         }
 
-        const data = await response.json();
-        return NextResponse.json(data, { status: response.status });
+        // Step 3: Save job and texts to Supabase DB directly
+        const { createClient } = await import('@supabase/supabase-js');
+        const supabase = createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!);
+
+        const { data: job, error: jobError } = await supabase
+          .from('cloning_jobs')
+          .insert({
+            user_id: body.userId || '00000000-0000-0000-0000-000000000001',
+            url,
+            clone_mode: 'rewrite',
+            product_name: body.productName || '',
+            product_description: body.productDescription || '',
+            framework: body.framework || null,
+            target: body.target || null,
+            custom_prompt: body.customPrompt || null,
+            original_html: renderedHTML,
+            total_texts: extractResult.length,
+            status: 'ready',
+          })
+          .select()
+          .single();
+
+        if (jobError || !job) {
+          console.error('❌ Job creation error:', jobError);
+          return NextResponse.json({ error: `Errore creazione job: ${jobError?.message}` }, { status: 500 });
+        }
+
+        // Insert texts in batches
+        const textsToInsert = extractResult.map(t => ({
+          job_id: job.id,
+          index: t.index,
+          original_text: t.originalText,
+          raw_text: t.rawText || null,
+          tag_name: t.tagName,
+          full_tag: t.fullTag,
+          classes: t.classes,
+          attributes: t.attributes,
+          context: t.context,
+          position: t.position,
+          processed: false,
+        }));
+
+        for (let i = 0; i < textsToInsert.length; i += 500) {
+          const batch = textsToInsert.slice(i, i + 500);
+          const { error: insertError } = await supabase.from('cloning_texts').insert(batch);
+          if (insertError) {
+            await supabase.from('cloning_jobs').delete().eq('id', job.id);
+            return NextResponse.json({ error: `Errore salvataggio testi: ${insertError.message}` }, { status: 500 });
+          }
+        }
+
+        console.log(`✅ Job ${job.id} creato con ${extractResult.length} testi (Playwright + Supabase diretto)`);
+
+        return NextResponse.json({
+          success: true,
+          phase: 'extract',
+          jobId: job.id,
+          totalTexts: extractResult.length,
+          message: 'Testi estratti con Playwright e salvati. Procedi con fase process.',
+        });
       } catch (err) {
         console.error('❌ Playwright rewrite extract error:', err);
-        // Fallback: send to Edge Function without rendered HTML (it will fetch itself)
         console.log('⚠️ Fallback: Edge Function fetchera\' direttamente...');
+        // Fall through to Edge Function proxy
       }
     }
 
