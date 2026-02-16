@@ -16,8 +16,11 @@ primary_region = 'fra'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 0
+  # Macchina sempre accesa: job in background (crawl, ecc.) e nessun cold start
+  min_machines_running = 1
   processes = ['app']
+  # Timeout per richieste HTTP lunghe (polling status, ecc.)
+  idle_timeout = 300
 
   [http_service.concurrency]
     type = 'connections'

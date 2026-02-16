@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import Header from '@/components/Header';
 import { fetchFunnelCrawlSteps, deleteFunnelCrawlStepsByFunnel } from '@/lib/supabase-operations';
-import type { FunnelCrawlStepRow } from '@/types/database';
+import { groupStepsByFunnel, type FunnelGroup } from '@/lib/funnel-groups';
 import type { FunnelPageVisionAnalysis } from '@/types';
 import {
   Filter,
@@ -23,53 +23,6 @@ import {
   Target,
   DollarSign,
 } from 'lucide-react';
-
-type FunnelGroup = {
-  key: string;
-  /** Nome per UI (può essere "Senza nome" se vuoto) */
-  funnelName: string;
-  /** Valore reale in DB (per delete/filter) */
-  funnelNameDb: string;
-  funnelTag: string | null;
-  entryUrl: string;
-  steps: FunnelCrawlStepRow[];
-  createdAt: string;
-};
-
-const FUNNEL_KEY_SEP = '\u001e';
-
-function groupStepsByFunnel(steps: FunnelCrawlStepRow[]): FunnelGroup[] {
-  const map = new Map<string, FunnelCrawlStepRow[]>();
-  const createdAtMap = new Map<string, string>();
-  for (const step of steps) {
-    const key = `${step.entry_url}${FUNNEL_KEY_SEP}${step.funnel_name}`;
-    if (!map.has(key)) {
-      map.set(key, []);
-      createdAtMap.set(key, step.created_at);
-    }
-    map.get(key)!.push(step);
-  }
-  const groups: FunnelGroup[] = [];
-  map.forEach((stepList, key) => {
-    const idx = key.indexOf(FUNNEL_KEY_SEP);
-    const entryUrl = idx >= 0 ? key.slice(0, idx) : key;
-    const first = stepList[0];
-    const funnelNameDb = first?.funnel_name ?? (idx >= 0 ? key.slice(idx + 1) : '');
-    const funnelTag = first?.funnel_tag ?? null;
-    const sorted = [...stepList].sort((a, b) => a.step_index - b.step_index);
-    groups.push({
-      key,
-      funnelName: funnelNameDb || 'Senza nome',
-      funnelNameDb,
-      funnelTag,
-      entryUrl,
-      steps: sorted,
-      createdAt: createdAtMap.get(key) || '',
-    });
-  });
-  groups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  return groups;
-}
 
 function formatDate(iso: string): string {
   try {
@@ -484,6 +437,16 @@ export default function MyFunnelsPage() {
                       {a.cta_text.map((cta, j) => (
                         <span key={j} className="inline-flex items-center gap-1 rounded-md bg-green-100 px-2 py-0.5 text-xs text-green-800">
                           <DollarSign className="h-3 w-3" />
+                          {cta}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {a.next_step_ctas && a.next_step_ctas.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      <span className="text-xs font-medium text-slate-600">CTA verso step successivo:</span>
+                      {a.next_step_ctas.map((cta, j) => (
+                        <span key={j} className="inline-flex items-center gap-1 rounded-md bg-emerald-200 px-2 py-0.5 text-xs font-medium text-emerald-900">
                           {cta}
                         </span>
                       ))}

@@ -1,14 +1,26 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+let _client: SupabaseClient | null = null;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables');
+function getClient(): SupabaseClient {
+  if (_client) return _client;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Missing Supabase environment variables');
+  }
+  _client = createClient(supabaseUrl, supabaseAnonKey);
+  return _client;
 }
 
-// Use untyped client to avoid schema/type mismatches during build
-export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+// Lazy init: client creato al primo uso (runtime), non al load del modulo → build OK senza env
+export const supabase = new Proxy({} as SupabaseClient, {
+  get(_, prop) {
+    const client = getClient();
+    const value = (client as Record<string | symbol, unknown>)[prop];
+    return typeof value === 'function' ? value.bind(client) : value;
+  },
+});
 
 // Helper function to check connection
 export async function checkSupabaseConnection(): Promise<{

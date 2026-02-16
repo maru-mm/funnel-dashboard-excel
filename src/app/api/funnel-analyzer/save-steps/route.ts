@@ -1,15 +1,64 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createFunnelCrawlSteps } from '@/lib/supabase-operations';
-import type { FunnelCrawlStep } from '@/types';
+import type { FunnelCrawlStep, FunnelPageVisionAnalysis } from '@/types';
+
+// Consenti body grandi (screenshot in base64): evita 413 su Fly/Vercel
+export const maxDuration = 60;
+
+function visionToRecord(a: FunnelPageVisionAnalysis): Record<string, unknown> {
+  return {
+    stepIndex: a.stepIndex,
+    url: a.url,
+    page_type: a.page_type,
+    headline: a.headline,
+    subheadline: a.subheadline,
+    body_copy: a.body_copy,
+    cta_text: a.cta_text,
+    next_step_ctas: a.next_step_ctas,
+    offer_details: a.offer_details,
+    price_points: a.price_points,
+    urgency_elements: a.urgency_elements,
+    social_proof: a.social_proof,
+    tech_stack_detected: a.tech_stack_detected,
+    outbound_links: a.outbound_links,
+    persuasion_techniques_used: a.persuasion_techniques_used,
+    raw: a.raw,
+    error: a.error,
+  };
+}
+
+function getSupabaseErrorInfo(error: unknown): string {
+  if (error && typeof error === 'object' && 'message' in error) {
+    const msg = (error as { message?: string }).message ?? '';
+    const code = (error as { code?: string }).code ?? '';
+    const details = (error as { details?: string }).details ?? '';
+    if (code) return `${msg} (code: ${code})${details ? ` - ${details}` : ''}`;
+    return msg;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { entryUrl, funnelName, funnelTag, steps } = body as {
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch (parseErr) {
+      const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Body non valido o troppo grande (payload con screenshot può superare il limite). Dettaglio: ${msg}`,
+        },
+        { status: 400 }
+      );
+    }
+    const { entryUrl, funnelName, funnelTag, steps, visionAnalyses } = (body || {}) as {
       entryUrl: string;
       funnelName?: string;
       funnelTag?: string;
       steps: FunnelCrawlStep[];
+      visionAnalyses?: FunnelPageVisionAnalysis[];
     };
 
     if (!entryUrl || typeof entryUrl !== 'string') {
@@ -28,11 +77,19 @@ export async function POST(request: NextRequest) {
     const name = typeof funnelName === 'string' ? funnelName.trim() : '';
     const tag = typeof funnelTag === 'string' ? funnelTag.trim() || null : null;
 
+    const visionByStep =
+      Array.isArray(visionAnalyses) && visionAnalyses.length > 0
+        ? Object.fromEntries(
+            visionAnalyses.map((a) => [a.stepIndex, visionToRecord(a)])
+          )
+        : undefined;
+
     const { count, ids } = await createFunnelCrawlSteps(
       entryUrl,
       name || 'Senza nome',
       tag,
-      steps
+      steps,
+      visionByStep
     );
 
     return NextResponse.json({
@@ -41,11 +98,12 @@ export async function POST(request: NextRequest) {
       ids,
     });
   } catch (error) {
-    console.error('Save funnel steps error:', error);
+    const detail = getSupabaseErrorInfo(error);
+    console.error('Save funnel steps error:', detail, error);
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Errore nel salvataggio su Supabase',
+        error: `Salvataggio Supabase fallito: ${detail}`,
       },
       { status: 500 }
     );

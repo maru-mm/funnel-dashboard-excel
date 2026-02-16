@@ -37,7 +37,7 @@ export default function MobileFunnelPage() {
     setSaveAllSuccess(false);
     setSaveAllError(null);
     try {
-      const res = await fetch('/api/funnel-analyzer/crawl', {
+      const startRes = await fetch('/api/funnel-analyzer/crawl/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -53,10 +53,50 @@ export default function MobileFunnelPage() {
           viewportHeight: 844,
         }),
       });
-      const data: FunnelCrawlResult = await res.json();
-      setResult(data);
-      setSelectedSteps(new Set());
-      if (data.steps?.length) afterCrawl?.(data);
+      const startData = await startRes.json();
+      if (!startRes.ok || !startData.jobId) {
+        setResult({
+          success: false,
+          entryUrl: entryUrl.trim(),
+          steps: [],
+          totalSteps: 0,
+          durationMs: 0,
+          visitedUrls: [],
+          error: startData?.error || 'Impossibile avviare il crawl',
+        });
+        setLoading(false);
+        return;
+      }
+      const jobId = startData.jobId;
+
+      const poll = async (): Promise<void> => {
+        const statusRes = await fetch(`/api/funnel-analyzer/crawl/status/${jobId}`);
+        const statusData = await statusRes.json();
+        if (statusData.status === 'completed' && statusData.result) {
+          const data = statusData.result;
+          setResult(data);
+          setSelectedSteps(new Set());
+          if (data.steps?.length) afterCrawl?.(data);
+          setLoading(false);
+          return;
+        }
+        if (statusData.status === 'failed') {
+          setResult({
+            success: false,
+            entryUrl: entryUrl.trim(),
+            steps: statusData.result?.steps ?? [],
+            totalSteps: statusData.result?.totalSteps ?? 0,
+            durationMs: statusData.result?.durationMs ?? 0,
+            visitedUrls: statusData.result?.visitedUrls ?? [],
+            error: statusData.error || 'Crawl fallito',
+          });
+          setLoading(false);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        return poll();
+      };
+      await poll();
     } catch (err) {
       setResult({
         success: false,

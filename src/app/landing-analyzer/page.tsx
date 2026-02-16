@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Header from '@/components/Header';
+import type { FunnelCrawlResult, FunnelCrawlStep, FunnelPageVisionAnalysis } from '@/types';
 import {
   Play,
   Loader2,
@@ -12,7 +13,6 @@ import {
   Code,
   Layers,
   Zap,
-  RefreshCw,
   Copy,
   ExternalLink,
   AlertCircle,
@@ -21,14 +21,6 @@ import {
 } from 'lucide-react';
 
 type PromptType = 'visual_analysis' | 'conversion_optimization' | 'ux_audit' | 'brand_analysis' | 'custom';
-
-interface HealthStatus {
-  success: boolean;
-  server: string;
-  status?: string;
-  version?: string;
-  error?: string;
-}
 
 interface ApiResult {
   success: boolean;
@@ -39,6 +31,53 @@ interface ApiResult {
   data?: any;
 }
 
+/** Esegue un crawl a singola pagina (stessa strategia del Funnel Analyzer). */
+async function runSinglePageCrawl(url: string): Promise<{ success: true; result: FunnelCrawlResult; durationMs: number } | { success: false; error: string }> {
+  const startTime = Date.now();
+  const startRes = await fetch('/api/funnel-analyzer/crawl/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      entryUrl: url.trim(),
+      headless: true,
+      maxSteps: 1,
+      maxDepth: 0,
+      followSameOriginOnly: true,
+      captureScreenshots: true,
+      captureNetwork: false,
+      captureCookies: false,
+      viewportWidth: 1280,
+      viewportHeight: 720,
+    }),
+  });
+  const startData = await startRes.json().catch(() => ({}));
+  if (!startRes.ok || !startData.jobId) {
+    return { success: false, error: (startData as { error?: string }).error || 'Impossibile avviare il crawl' };
+  }
+  const jobId = startData.jobId;
+
+  const pollStatus = async (): Promise<{ success: true; result: FunnelCrawlResult } | { success: false; error: string }> => {
+    const statusRes = await fetch(`/api/funnel-analyzer/crawl/status/${jobId}`);
+    const statusData = (await statusRes.json().catch(() => ({}))) as { status?: string; result?: FunnelCrawlResult; error?: string };
+    if (statusData.status === 'completed' && statusData.result) {
+      return { success: true, result: statusData.result };
+    }
+    if (statusData.status === 'failed') {
+      return { success: false, error: statusData.error || 'Crawl fallito' };
+    }
+    if (statusRes.status === 404 || statusData.status === 'not_found') {
+      return { success: false, error: 'Job non trovato' };
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+    return pollStatus();
+  };
+
+  const pollResult = await pollStatus();
+  const durationMs = Date.now() - startTime;
+  if (!pollResult.success) return pollResult;
+  return { ...pollResult, durationMs };
+}
+
 const PROMPT_TYPES: { value: PromptType; label: string; description: string }[] = [
   { value: 'visual_analysis', label: 'Visual Analysis', description: 'Complete visual analysis of the page' },
   { value: 'conversion_optimization', label: 'Conversion Optimization', description: 'Tips to optimize conversions' },
@@ -47,153 +86,209 @@ const PROMPT_TYPES: { value: PromptType; label: string; description: string }[] 
   { value: 'custom', label: 'Custom Prompt', description: 'Custom prompt' },
 ];
 
+function formatStepAsScrape(step: FunnelCrawlStep) {
+  return {
+    url: step.url,
+    title: step.title,
+    links: step.links,
+    ctaButtons: step.ctaButtons,
+    forms: step.forms,
+    screenshotBase64: step.screenshotBase64,
+    contentText: step.contentText,
+    domLength: step.domLength,
+  };
+}
+
 export default function LandingAnalyzerPage() {
   const [url, setUrl] = useState('');
   const [promptType, setPromptType] = useState<PromptType>('visual_analysis');
   const [customPrompt, setCustomPrompt] = useState('');
-  
-  // Analysis options
+  const [visionProvider, setVisionProvider] = useState<'claude' | 'gemini'>('gemini');
+
+  // Analysis options (per Full Analysis: cosa includere)
   const [includeScrape, setIncludeScrape] = useState(true);
   const [includeVision, setIncludeVision] = useState(true);
   const [includeExtract, setIncludeExtract] = useState(true);
-  
+
   // Loading states
-  const [healthLoading, setHealthLoading] = useState(false);
   const [scrapeLoading, setScrapeLoading] = useState(false);
   const [visionLoading, setVisionLoading] = useState(false);
   const [extractLoading, setExtractLoading] = useState(false);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
-  
+
   // Results
-  const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null);
   const [scrapeResult, setScrapeResult] = useState<ApiResult | null>(null);
   const [visionResult, setVisionResult] = useState<ApiResult | null>(null);
   const [extractResult, setExtractResult] = useState<ApiResult | null>(null);
   const [analyzeResult, setAnalyzeResult] = useState<ApiResult | null>(null);
-  
+
   // Active tab
   const [activeResultTab, setActiveResultTab] = useState<'scrape' | 'vision' | 'extract' | 'analyze'>('analyze');
 
-  // Health check
-  const checkHealth = async () => {
-    setHealthLoading(true);
-    try {
-      const response = await fetch('/api/agentic/health');
-      const data = await response.json();
-      setHealthStatus(data);
-    } catch (error) {
-      setHealthStatus({
-        success: false,
-        server: 'http://localhost:8000',
-        error: error instanceof Error ? error.message : 'Connection failed',
-      });
-    } finally {
-      setHealthLoading(false);
-    }
-  };
-
-  // Scrape
+  /** Scrape: crawl a singola pagina (stessa strategia Funnel Analyzer) */
   const runScrape = async () => {
     if (!url.trim()) return;
     setScrapeLoading(true);
     setScrapeResult(null);
     try {
-      const response = await fetch('/api/agentic/scrape', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
-      });
-      const data = await response.json();
-      setScrapeResult({ ...data, data: data });
+      const crawl = await runSinglePageCrawl(url.trim());
+      if (!crawl.success) {
+        setScrapeResult({ success: false, error: crawl.error });
+        setActiveResultTab('scrape');
+        return;
+      }
+      const step = crawl.result.steps?.[0];
+      if (!step) {
+        setScrapeResult({ success: false, error: 'Nessuno step restituito dal crawl' });
+        setActiveResultTab('scrape');
+        return;
+      }
+      const data = formatStepAsScrape(step);
+      setScrapeResult({ success: true, data, duration_ms: crawl.durationMs });
       setActiveResultTab('scrape');
     } catch (error) {
       setScrapeResult({
         success: false,
         error: error instanceof Error ? error.message : 'Request failed',
       });
+      setActiveResultTab('scrape');
     } finally {
       setScrapeLoading(false);
     }
   };
 
-  // Vision
+  /** Vision: crawl + API vision del Funnel Analyzer (Gemini/Claude) */
   const runVision = async () => {
     if (!url.trim()) return;
     setVisionLoading(true);
     setVisionResult(null);
     try {
-      const response = await fetch('/api/agentic/vision', {
+      const crawl = await runSinglePageCrawl(url.trim());
+      if (!crawl.success) {
+        setVisionResult({ success: false, error: crawl.error });
+        setActiveResultTab('vision');
+        return;
+      }
+      const step = crawl.result.steps?.[0];
+      if (!step?.screenshotBase64) {
+        setVisionResult({ success: false, error: 'Screenshot non disponibile per questo step' });
+        setActiveResultTab('vision');
+        return;
+      }
+      const visionRes = await fetch('/api/funnel-analyzer/vision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          url: url.trim(),
-          prompt_type: promptType,
-          custom_prompt: promptType === 'custom' ? customPrompt : undefined,
-        }),
+        body: JSON.stringify({ steps: [step], provider: visionProvider }),
       });
-      const data = await response.json();
-      setVisionResult({ ...data, data: data });
+      const visionData = await visionRes.json();
+      if (!visionRes.ok) {
+        setVisionResult({ success: false, error: visionData.error || 'Vision fallita', details: visionData.details });
+        setActiveResultTab('vision');
+        return;
+      }
+      const analysis = (visionData.analyses as FunnelPageVisionAnalysis[])?.[0];
+      setVisionResult({
+        success: visionData.success !== false,
+        data: { analysis, analyses: visionData.analyses, errors: visionData.errors },
+        duration_ms: crawl.durationMs,
+      });
       setActiveResultTab('vision');
     } catch (error) {
       setVisionResult({
         success: false,
         error: error instanceof Error ? error.message : 'Request failed',
       });
+      setActiveResultTab('vision');
     } finally {
       setVisionLoading(false);
     }
   };
 
-  // Extract
+  /** Extract: crawl a singola pagina e restituisci struttura (link, form, titolo) */
   const runExtract = async () => {
     if (!url.trim()) return;
     setExtractLoading(true);
     setExtractResult(null);
     try {
-      const response = await fetch('/api/agentic/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
-      });
-      const data = await response.json();
-      setExtractResult({ ...data, data: data });
+      const crawl = await runSinglePageCrawl(url.trim());
+      if (!crawl.success) {
+        setExtractResult({ success: false, error: crawl.error });
+        setActiveResultTab('extract');
+        return;
+      }
+      const step = crawl.result.steps?.[0];
+      if (!step) {
+        setExtractResult({ success: false, error: 'Nessuno step restituito dal crawl' });
+        setActiveResultTab('extract');
+        return;
+      }
+      const data = {
+        url: step.url,
+        title: step.title,
+        links: step.links,
+        ctaButtons: step.ctaButtons,
+        forms: step.forms,
+        contentText: step.contentText?.slice(0, 5000),
+      };
+      setExtractResult({ success: true, data, duration_ms: crawl.durationMs });
       setActiveResultTab('extract');
     } catch (error) {
       setExtractResult({
         success: false,
         error: error instanceof Error ? error.message : 'Request failed',
       });
+      setActiveResultTab('extract');
     } finally {
       setExtractLoading(false);
     }
   };
 
-  // Full Analyze
+  /** Full Analysis: crawl + vision (stessa strategia Funnel Analyzer, niente API agentic) */
   const runFullAnalysis = async () => {
     if (!url.trim()) return;
     setAnalyzeLoading(true);
     setAnalyzeResult(null);
     try {
-      const response = await fetch('/api/agentic/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          url: url.trim(),
-          include_scrape: includeScrape,
-          include_vision: includeVision,
-          include_extract: includeExtract,
-          prompt_type: promptType,
-          custom_prompt: promptType === 'custom' ? customPrompt : undefined,
-        }),
+      const crawl = await runSinglePageCrawl(url.trim());
+      if (!crawl.success) {
+        setAnalyzeResult({ success: false, error: crawl.error });
+        setActiveResultTab('analyze');
+        return;
+      }
+      const step = crawl.result.steps?.[0];
+      if (!step) {
+        setAnalyzeResult({ success: false, error: 'Nessuno step restituito dal crawl' });
+        setActiveResultTab('analyze');
+        return;
+      }
+      const out: { scrape?: ReturnType<typeof formatStepAsScrape>; vision?: FunnelPageVisionAnalysis; extract?: unknown } = {};
+      if (includeScrape) out.scrape = formatStepAsScrape(step);
+      if (includeExtract) {
+        out.extract = { url: step.url, title: step.title, links: step.links, ctaButtons: step.ctaButtons, forms: step.forms };
+      }
+      if (includeVision && step.screenshotBase64) {
+        const visionRes = await fetch('/api/funnel-analyzer/vision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ steps: [step], provider: visionProvider }),
+        });
+        const visionData = await visionRes.json();
+        const analysis = (visionData.analyses as FunnelPageVisionAnalysis[])?.[0];
+        if (analysis) out.vision = analysis;
+        if (visionData.errors?.length) (out as { visionErrors?: string[] }).visionErrors = visionData.errors;
+      }
+      setAnalyzeResult({
+        success: true,
+        data: out,
+        duration_ms: crawl.durationMs,
       });
-      const data = await response.json();
-      setAnalyzeResult({ ...data, data: data });
       setActiveResultTab('analyze');
     } catch (error) {
       setAnalyzeResult({
         success: false,
         error: error instanceof Error ? error.message : 'Request failed',
       });
+      setActiveResultTab('analyze');
     } finally {
       setAnalyzeLoading(false);
     }
@@ -222,61 +317,25 @@ export default function LandingAnalyzerPage() {
     <div className="min-h-screen bg-gray-50">
       <Header
         title="Landing Analyzer"
-        subtitle="Agentic APIs for landing page analysis"
+        subtitle="Crawl + Vision (stessa strategia del Funnel Analyzer)"
       />
 
       <div className="p-6">
-        {/* Server Status */}
+        {/* Engine: Funnel Crawl + Vision (stessa strategia del Funnel Analyzer) */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Server className="w-5 h-5 text-gray-500" />
-              <div>
-                <h3 className="font-medium text-gray-900">Agentic API Server</h3>
-                <p className="text-sm text-gray-500">localhost:8000</p>
-              </div>
+          <div className="flex items-center gap-3">
+            <Server className="w-5 h-5 text-gray-500" />
+            <div>
+              <h3 className="font-medium text-gray-900">Motore: Funnel Crawl + Vision</h3>
+              <p className="text-sm text-gray-500">
+                Crawl a singola pagina (Playwright) + analisi vision con Gemini/Claude. Nessun server agentic esterno.
+              </p>
             </div>
-            <div className="flex items-center gap-3">
-              {healthStatus && (
-                <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
-                  healthStatus.success 
-                    ? 'bg-green-100 text-green-700' 
-                    : 'bg-red-100 text-red-700'
-                }`}>
-                  {healthStatus.success ? (
-                    <CheckCircle className="w-4 h-4" />
-                  ) : (
-                    <XCircle className="w-4 h-4" />
-                  )}
-                  {healthStatus.success ? 'Online' : 'Offline'}
-                </div>
-              )}
-              <button
-                onClick={checkHealth}
-                disabled={healthLoading}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
-              >
-                {healthLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-4 h-4" />
-                )}
-                Check Health
-              </button>
+            <div className="flex items-center gap-2 px-3 py-1 rounded-full text-sm bg-green-100 text-green-700">
+              <CheckCircle className="w-4 h-4" />
+              Disponibile
             </div>
           </div>
-          
-          {healthStatus && !healthStatus.success && (
-            <div className="mt-3 p-3 bg-red-50 rounded-lg border border-red-200">
-              <p className="text-sm text-red-700">
-                <AlertCircle className="w-4 h-4 inline mr-1" />
-                {healthStatus.error}
-              </p>
-              <p className="text-xs text-red-600 mt-1">
-                Make sure the server is running on {healthStatus.server}
-              </p>
-            </div>
-          )}
         </div>
 
         {/* URL Input */}
@@ -346,6 +405,40 @@ export default function LandingAnalyzerPage() {
               />
             </div>
           )}
+
+          {/* Vision provider (per Vision e Full Analysis) */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Provider analisi vision
+            </label>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setVisionProvider('gemini')}
+                className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                  visionProvider === 'gemini'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                Gemini
+              </button>
+              <button
+                type="button"
+                onClick={() => setVisionProvider('claude')}
+                className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                  visionProvider === 'claude'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                Claude
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Richiede GOOGLE_GEMINI_API_KEY o ANTHROPIC_API_KEY (env / Fly secrets).
+            </p>
+          </div>
 
           {/* Analysis Options for Full Analysis */}
           <div className="mb-4 p-4 bg-gray-50 rounded-lg">

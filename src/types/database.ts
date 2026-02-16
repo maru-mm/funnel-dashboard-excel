@@ -111,8 +111,10 @@ export interface Database {
           template_id: string | null;
           product_id: string;
           url_to_swipe: string;
+          prompt: string | null;
           swipe_status: SwipeStatus;
           swipe_result: string | null;
+          feedback: string | null;
           cloned_data: Json | null;
           swiped_data: Json | null;
           analysis_status: SwipeStatus | null;
@@ -128,8 +130,10 @@ export interface Database {
           template_id?: string | null;
           product_id: string;
           url_to_swipe: string;
+          prompt?: string | null;
           swipe_status?: SwipeStatus;
           swipe_result?: string | null;
+          feedback?: string | null;
           cloned_data?: Json | null;
           swiped_data?: Json | null;
           analysis_status?: SwipeStatus | null;
@@ -145,8 +149,10 @@ export interface Database {
           template_id?: string | null;
           product_id?: string;
           url_to_swipe?: string;
+          prompt?: string | null;
           swipe_status?: SwipeStatus;
           swipe_result?: string | null;
+          feedback?: string | null;
           cloned_data?: Json | null;
           swiped_data?: Json | null;
           analysis_status?: SwipeStatus | null;
@@ -206,6 +212,7 @@ export interface Database {
           title: string;
           step_data: Json;
           screenshot_base64: string | null;
+          vision_analysis: Json | null;
           created_at: string;
         };
         Insert: {
@@ -218,6 +225,7 @@ export interface Database {
           title?: string;
           step_data?: Json;
           screenshot_base64?: string | null;
+          vision_analysis?: Json | null;
           created_at?: string;
         };
         Update: {
@@ -230,7 +238,179 @@ export interface Database {
           title?: string;
           step_data?: Json;
           screenshot_base64?: string | null;
+          vision_analysis?: Json | null;
           created_at?: string;
+        };
+      };
+      affiliate_browser_chats: {
+        Row: {
+          id: string;
+          prompt: string;
+          start_url: string | null;
+          max_turns: number;
+          job_id: string | null;
+          status: string;
+          result: string | null;
+          error: string | null;
+          turns_used: number;
+          final_url: string | null;
+          created_at: string;
+          updated_at: string;
+          finished_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          prompt: string;
+          start_url?: string | null;
+          max_turns?: number;
+          job_id?: string | null;
+          status?: string;
+          result?: string | null;
+          error?: string | null;
+          turns_used?: number;
+          final_url?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          finished_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          prompt?: string;
+          start_url?: string | null;
+          max_turns?: number;
+          job_id?: string | null;
+          status?: string;
+          result?: string | null;
+          error?: string | null;
+          turns_used?: number;
+          final_url?: string | null;
+          updated_at?: string;
+          finished_at?: string | null;
+        };
+      };
+      affiliate_saved_funnels: {
+        Row: {
+          id: string;
+          chat_id: string | null;
+          funnel_name: string;
+          brand_name: string | null;
+          entry_url: string;
+          funnel_type: string;
+          category: string;
+          tags: string[];
+          total_steps: number;
+          steps: Json;
+          analysis_summary: string | null;
+          persuasion_techniques: string[];
+          lead_capture_method: string | null;
+          notable_elements: string[];
+          raw_agent_result: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          chat_id?: string | null;
+          funnel_name: string;
+          brand_name?: string | null;
+          entry_url: string;
+          funnel_type?: string;
+          category?: string;
+          tags?: string[];
+          total_steps?: number;
+          steps?: Json;
+          analysis_summary?: string | null;
+          persuasion_techniques?: string[];
+          lead_capture_method?: string | null;
+          notable_elements?: string[];
+          raw_agent_result: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          chat_id?: string | null;
+          funnel_name?: string;
+          brand_name?: string | null;
+          entry_url?: string;
+          funnel_type?: string;
+          category?: string;
+          tags?: string[];
+          total_steps?: number;
+          steps?: Json;
+          analysis_summary?: string | null;
+          persuasion_techniques?: string[];
+          lead_capture_method?: string | null;
+          notable_elements?: string[];
+          raw_agent_result?: string;
+          updated_at?: string;
+        };
+      };
+      scheduled_browser_jobs: {
+        Row: {
+          id: string;
+          template_id: string;
+          title: string;
+          prompt: string;
+          start_url: string | null;
+          max_turns: number;
+          category: string;
+          tags: string[];
+          frequency: string;
+          is_active: boolean;
+          next_run_at: string;
+          last_run_at: string | null;
+          last_job_id: string | null;
+          last_status: string | null;
+          last_result: string | null;
+          last_error: string | null;
+          total_runs: number;
+          successful_runs: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          template_id: string;
+          title: string;
+          prompt: string;
+          start_url?: string | null;
+          max_turns?: number;
+          category?: string;
+          tags?: string[];
+          frequency?: string;
+          is_active?: boolean;
+          next_run_at?: string;
+          last_run_at?: string | null;
+          last_job_id?: string | null;
+          last_status?: string | null;
+          last_result?: string | null;
+          last_error?: string | null;
+          total_runs?: number;
+          successful_runs?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          template_id?: string;
+          title?: string;
+          prompt?: string;
+          start_url?: string | null;
+          max_turns?: number;
+          category?: string;
+          tags?: string[];
+          frequency?: string;
+          is_active?: boolean;
+          next_run_at?: string;
+          last_run_at?: string | null;
+          last_job_id?: string | null;
+          last_status?: string | null;
+          last_result?: string | null;
+          last_error?: string | null;
+          total_runs?: number;
+          successful_runs?: number;
+          updated_at?: string;
         };
       };
     };
@@ -256,3 +436,15 @@ export type PostPurchasePageUpdate = Database['public']['Tables']['post_purchase
 
 export type FunnelCrawlStepRow = Database['public']['Tables']['funnel_crawl_steps']['Row'];
 export type FunnelCrawlStepInsert = Database['public']['Tables']['funnel_crawl_steps']['Insert'];
+
+export type AffiliateBrowserChat = Database['public']['Tables']['affiliate_browser_chats']['Row'];
+export type AffiliateBrowserChatInsert = Database['public']['Tables']['affiliate_browser_chats']['Insert'];
+export type AffiliateBrowserChatUpdate = Database['public']['Tables']['affiliate_browser_chats']['Update'];
+
+export type AffiliateSavedFunnel = Database['public']['Tables']['affiliate_saved_funnels']['Row'];
+export type AffiliateSavedFunnelInsert = Database['public']['Tables']['affiliate_saved_funnels']['Insert'];
+export type AffiliateSavedFunnelUpdate = Database['public']['Tables']['affiliate_saved_funnels']['Update'];
+
+export type ScheduledBrowserJob = Database['public']['Tables']['scheduled_browser_jobs']['Row'];
+export type ScheduledBrowserJobInsert = Database['public']['Tables']['scheduled_browser_jobs']['Insert'];
+export type ScheduledBrowserJobUpdate = Database['public']['Tables']['scheduled_browser_jobs']['Update'];

@@ -1,8 +1,11 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Header from '@/components/Header';
 import { useStore } from '@/store/useStore';
+import { fetchFunnelCrawlSteps, fetchAffiliateSavedFunnels } from '@/lib/supabase-operations';
+import { groupStepsByFunnel, type FunnelGroup } from '@/lib/funnel-groups';
+import type { AffiliateSavedFunnel } from '@/types/database';
 import {
   BUILT_IN_PAGE_TYPE_OPTIONS,
   PAGE_TYPE_CATEGORIES,
@@ -34,7 +37,24 @@ import {
   ChevronUp,
   RefreshCw,
   MessageSquare,
+  FileStack,
+  Target,
+  BookOpen,
+  Copy,
+  Globe,
 } from 'lucide-react';
+
+// Type for steps inside affiliate_saved_funnels.steps (JSONB)
+interface AffiliateFunnelStep {
+  step_index: number;
+  url: string;
+  title: string;
+  step_type?: string;
+  input_type?: string;
+  options?: string[];
+  description?: string;
+  cta_text?: string;
+}
 
 // API endpoints - can switch between local proxy, direct fly.dev, or local dev server
 const API_ENDPOINTS = {
@@ -184,6 +204,43 @@ export default function FrontEndFunnel() {
   // Jobs Monitor Panel
   const [showJobsPanel, setShowJobsPanel] = useState(false);
 
+  // Saved Funnels (da Funnel Analyzer)
+  const [savedFunnels, setSavedFunnels] = useState<FunnelGroup[]>([]);
+  const [savedFunnelsLoading, setSavedFunnelsLoading] = useState(false);
+  const [savedFunnelsError, setSavedFunnelsError] = useState<string | null>(null);
+  const [selectedSavedFunnelKey, setSelectedSavedFunnelKey] = useState<string | null>(null);
+
+  // Affiliate Saved Funnels (Quiz Funnels da Affiliate Browser Chat)
+  const [affiliateFunnels, setAffiliateFunnels] = useState<AffiliateSavedFunnel[]>([]);
+  const [affiliateFunnelsLoading, setAffiliateFunnelsLoading] = useState(false);
+  const [affiliateFunnelsError, setAffiliateFunnelsError] = useState<string | null>(null);
+  const [selectedAffiliateFunnelId, setSelectedAffiliateFunnelId] = useState<string | null>(null);
+
+  // Clone Modal (smooth-responder Edge Function)
+  const [cloneModal, setCloneModal] = useState<{
+    isOpen: boolean;
+    pageId: string;
+    pageName: string;
+    url: string;
+  }>({ isOpen: false, pageId: '', pageName: '', url: '' });
+  const [cloneMode, setCloneMode] = useState<'identical' | 'rewrite' | 'translate'>('identical');
+  const [cloneConfig, setCloneConfig] = useState({
+    productName: '',
+    productDescription: '',
+    framework: '',
+    target: '',
+    customPrompt: '',
+    language: 'it',
+    targetLanguage: 'Italiano',
+  });
+  const [cloningIds, setCloningIds] = useState<string[]>([]);
+  const [cloneProgress, setCloneProgress] = useState<{
+    phase: string;
+    totalTexts: number;
+    processedTexts: number;
+    message: string;
+  } | null>(null);
+
   // Vision Analysis Modal
   const [visionModal, setVisionModal] = useState<{
     isOpen: boolean;
@@ -196,6 +253,98 @@ export default function FrontEndFunnel() {
   const [visionLoading, setVisionLoading] = useState(false);
   const [visionError, setVisionError] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<number[]>([]);
+
+  const selectedSavedFunnel = useMemo(
+    () => (selectedSavedFunnelKey ? savedFunnels.find((f) => f.key === selectedSavedFunnelKey) : null),
+    [selectedSavedFunnelKey, savedFunnels]
+  );
+
+  const selectedAffiliateFunnel = useMemo(
+    () => (selectedAffiliateFunnelId ? affiliateFunnels.find((f) => f.id === selectedAffiliateFunnelId) : null),
+    [selectedAffiliateFunnelId, affiliateFunnels]
+  );
+
+  const affiliateFunnelSteps = useMemo<AffiliateFunnelStep[]>(() => {
+    if (!selectedAffiliateFunnel) return [];
+    const raw = selectedAffiliateFunnel.steps;
+    if (Array.isArray(raw)) return raw as AffiliateFunnelStep[];
+    return [];
+  }, [selectedAffiliateFunnel]);
+
+  const fetchSavedFunnels = useCallback(async () => {
+    setSavedFunnelsLoading(true);
+    setSavedFunnelsError(null);
+    try {
+      const steps = await fetchFunnelCrawlSteps();
+      setSavedFunnels(groupStepsByFunnel(steps));
+    } catch (err) {
+      setSavedFunnelsError(err instanceof Error ? err.message : 'Errore caricamento funnel');
+    } finally {
+      setSavedFunnelsLoading(false);
+    }
+  }, []);
+
+  const fetchAffiliateData = useCallback(async () => {
+    setAffiliateFunnelsLoading(true);
+    setAffiliateFunnelsError(null);
+    try {
+      const data = await fetchAffiliateSavedFunnels();
+      setAffiliateFunnels(data);
+    } catch (err) {
+      setAffiliateFunnelsError(err instanceof Error ? err.message : 'Errore caricamento quiz funnel');
+    } finally {
+      setAffiliateFunnelsLoading(false);
+    }
+  }, []);
+
+  // Load saved funnels and affiliate funnels on page load
+  useEffect(() => {
+    fetchSavedFunnels();
+    fetchAffiliateData();
+  }, [fetchSavedFunnels, fetchAffiliateData]);
+
+  const handleUseStepForSwipe = (step: { step_index: number; url: string; title: string }) => {
+    addFunnelPage({
+      name: step.title ? `Step ${step.step_index}: ${step.title}`.slice(0, 80) : `Step ${step.step_index}`,
+      pageType: 'landing',
+      productId: products[0]?.id || '',
+      urlToSwipe: step.url,
+      prompt: '',
+      swipeStatus: 'pending',
+      feedback: '',
+    });
+  };
+
+  const handleUseAffiliateStepForSwipe = (step: AffiliateFunnelStep, funnelName: string) => {
+    const stepType = step.step_type || 'landing';
+    const pageType: PageType = stepType === 'quiz_question' || stepType === 'info_screen'
+      ? 'quiz_funnel'
+      : stepType === 'checkout'
+        ? 'checkout'
+        : stepType === 'landing'
+          ? 'landing'
+          : 'landing';
+
+    addFunnelPage({
+      name: step.title
+        ? `${funnelName} - Step ${step.step_index}: ${step.title}`.slice(0, 80)
+        : `${funnelName} - Step ${step.step_index}`,
+      pageType,
+      productId: products[0]?.id || '',
+      urlToSwipe: step.url || '',
+      prompt: step.description || '',
+      swipeStatus: 'pending',
+      feedback: '',
+    });
+  };
+
+  const handleImportAllAffiliateSteps = () => {
+    if (!selectedAffiliateFunnel || affiliateFunnelSteps.length === 0) return;
+    const funnelName = selectedAffiliateFunnel.funnel_name;
+    for (const step of affiliateFunnelSteps) {
+      handleUseAffiliateStepForSwipe(step, funnelName);
+    }
+  };
 
   // Poll job status
   const pollJobStatus = useCallback(async (jobId: string, pageId: string) => {
@@ -291,8 +440,9 @@ export default function FrontEndFunnel() {
   }, [activeJobs, pollJobStatus]);
 
   const handleAddPage = () => {
+    const stepNum = (funnelPages || []).length + 1;
     addFunnelPage({
-      name: 'New Page',
+      name: `Step ${stepNum}`,
       pageType: 'landing',
       productId: products[0]?.id || '',
       urlToSwipe: '',
@@ -390,6 +540,230 @@ export default function FrontEndFunnel() {
     
     if (page.urlToSwipe) {
       fetchVisionJobs(page.urlToSwipe);
+    }
+  };
+
+  // Clone via smooth-responder Edge Function
+  const openCloneModal = (page: typeof funnelPages[0]) => {
+    const product = (products || []).find(p => p.id === page.productId);
+    setCloneConfig({
+      productName: product?.name || '',
+      productDescription: product?.description || '',
+      framework: '',
+      target: '',
+      customPrompt: page.prompt || '',
+      language: 'it',
+      targetLanguage: 'Italiano',
+    });
+    setCloneMode('identical');
+    setCloneProgress(null);
+    setCloneModal({
+      isOpen: true,
+      pageId: page.id,
+      pageName: page.name,
+      url: page.urlToSwipe,
+    });
+  };
+
+  const handleClone = async () => {
+    const pageId = cloneModal.pageId;
+    const url = cloneModal.url;
+    const pageName = cloneModal.pageName;
+    const mode = cloneMode;
+
+    setCloneModal({ isOpen: false, pageId: '', pageName: '', url: '' });
+    setCloningIds(prev => [...prev, pageId]);
+    updateFunnelPage(pageId, {
+      swipeStatus: 'in_progress',
+      swipeResult: mode === 'identical' ? 'Cloning...' : mode === 'translate' ? 'Translating...' : 'Rewriting...',
+    });
+
+    try {
+      if (mode === 'identical') {
+        // Identical clone - single call, no API key needed
+        const response = await fetch('/api/clone-funnel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, cloneMode: 'identical' }),
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || 'Clone failed');
+
+        updateFunnelPage(pageId, {
+          swipeStatus: 'completed',
+          swipeResult: `Clone OK (${(data.content?.length || 0).toLocaleString()} chars)`,
+          clonedData: {
+            html: data.content,
+            title: pageName,
+            method_used: 'identical',
+            content_length: data.content?.length || 0,
+            duration_seconds: 0,
+            cloned_at: new Date(),
+          },
+        });
+
+        setHtmlPreviewModal({
+          isOpen: true,
+          title: `Clone: ${pageName}`,
+          html: data.content,
+          iframeSrc: '',
+          metadata: { method: 'identical', length: data.content?.length || 0, duration: 0 },
+        });
+
+      } else if (mode === 'rewrite') {
+        // Async rewrite: extract → process loop → completed
+        const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
+
+        // Phase 1: Extract
+        setCloneProgress({ phase: 'extract', totalTexts: 0, processedTexts: 0, message: 'Extracting texts...' });
+        const extractRes = await fetch('/api/clone-funnel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url,
+            cloneMode: 'rewrite',
+            phase: 'extract',
+            productName: cloneConfig.productName,
+            productDescription: cloneConfig.productDescription,
+            framework: cloneConfig.framework || undefined,
+            target: cloneConfig.target || undefined,
+            customPrompt: cloneConfig.customPrompt || undefined,
+            userId: DEFAULT_USER_ID,
+          }),
+        });
+        const extractData = await extractRes.json();
+        if (!extractRes.ok || extractData.error) throw new Error(extractData.error || 'Extract failed');
+
+        const jobId = extractData.jobId;
+        const totalTexts = extractData.totalTexts || 0;
+        setCloneProgress({ phase: 'processing', totalTexts, processedTexts: 0, message: `0/${totalTexts} texts processed...` });
+        updateFunnelPage(pageId, { swipeResult: `Rewriting 0/${totalTexts}...` });
+
+        // Phase 2: Process loop
+        let completed = false;
+        let batchNum = 0;
+        while (!completed) {
+          await new Promise(r => setTimeout(r, 3000));
+
+          const processRes = await fetch('/api/clone-funnel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              cloneMode: 'rewrite',
+              phase: 'process',
+              jobId,
+              batchNumber: batchNum,
+              userId: DEFAULT_USER_ID,
+            }),
+          });
+          const processData = await processRes.json();
+          if (!processRes.ok || processData.error) throw new Error(processData.error || 'Process failed');
+
+          if (processData.phase === 'completed') {
+            completed = true;
+
+            const replacements = processData.replacements || 0;
+            const textsProcessed = processData.textsProcessed || totalTexts;
+            setCloneProgress(null);
+
+            updateFunnelPage(pageId, {
+              swipeStatus: 'completed',
+              swipeResult: `Rewrite OK (${replacements}/${textsProcessed} texts)`,
+              swipedData: {
+                html: processData.content,
+                originalTitle: pageName,
+                newTitle: `Rewrite: ${pageName}`,
+                originalLength: 0,
+                newLength: processData.content?.length || 0,
+                processingTime: 0,
+                methodUsed: 'smooth-responder-rewrite',
+                changesMade: [`${replacements} texts rewritten out of ${textsProcessed}`],
+                swipedAt: new Date(),
+              },
+            });
+
+            setHtmlPreviewModal({
+              isOpen: true,
+              title: `Rewrite: ${pageName}`,
+              html: processData.content,
+              iframeSrc: '',
+              metadata: { method: 'rewrite', length: processData.content?.length || 0, duration: 0 },
+            });
+          } else if (processData.continue) {
+            batchNum++;
+            const processed = processData.batchProcessed || 0;
+            const remaining = processData.remainingTexts || 0;
+            const done = totalTexts - remaining;
+            setCloneProgress({
+              phase: 'processing',
+              totalTexts,
+              processedTexts: done,
+              message: `${done}/${totalTexts} texts processed...`,
+            });
+            updateFunnelPage(pageId, { swipeResult: `Rewriting ${done}/${totalTexts}...` });
+          } else {
+            throw new Error('Unexpected response from process phase');
+          }
+        }
+
+      } else if (mode === 'translate') {
+        // Translate mode: need clonedData HTML first
+        const page = (funnelPages || []).find(p => p.id === pageId);
+        const htmlToTranslate = page?.clonedData?.html || page?.swipedData?.html;
+
+        if (!htmlToTranslate) {
+          throw new Error('Clona la pagina prima di tradurla (serve HTML clonato o riscritto)');
+        }
+
+        setCloneProgress({ phase: 'translating', totalTexts: 0, processedTexts: 0, message: `Translating to ${cloneConfig.targetLanguage}...` });
+        const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
+
+        const response = await fetch('/api/clone-funnel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cloneMode: 'translate',
+            htmlContent: htmlToTranslate,
+            targetLanguage: cloneConfig.targetLanguage,
+            userId: DEFAULT_USER_ID,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || 'Translate failed');
+
+        setCloneProgress(null);
+        updateFunnelPage(pageId, {
+          swipeStatus: 'completed',
+          swipeResult: `Translated (${data.textsTranslated || 0} texts → ${data.targetLanguage})`,
+          swipedData: {
+            html: data.content,
+            originalTitle: pageName,
+            newTitle: `${data.targetLanguage}: ${pageName}`,
+            originalLength: data.originalHtmlSize || 0,
+            newLength: data.finalHtmlSize || 0,
+            processingTime: 0,
+            methodUsed: 'smooth-responder-translate',
+            changesMade: [`${data.textsTranslated} texts translated to ${data.targetLanguage}`],
+            swipedAt: new Date(),
+          },
+        });
+
+        setHtmlPreviewModal({
+          isOpen: true,
+          title: `${data.targetLanguage}: ${pageName}`,
+          html: data.content,
+          iframeSrc: '',
+          metadata: { method: 'translate', length: data.finalHtmlSize || 0, duration: 0 },
+        });
+      }
+    } catch (error) {
+      setCloneProgress(null);
+      updateFunnelPage(pageId, {
+        swipeStatus: 'failed',
+        swipeResult: error instanceof Error ? error.message : 'Clone error',
+      });
+    } finally {
+      setCloningIds(prev => prev.filter(i => i !== pageId));
     }
   };
 
@@ -556,9 +930,10 @@ export default function FrontEndFunnel() {
         });
       }
     } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Network error';
       updateFunnelPage(page.id, { 
         analysisStatus: 'failed',
-        analysisResult: 'Network error'
+        analysisResult: msg === 'Failed to fetch' ? 'Errore di rete. Verifica /api/health e che claude-code-agents.fly.dev sia raggiungibile.' : msg
       });
     } finally {
       setAnalyzingIds((prev) => prev.filter((i) => i !== page.id));
@@ -589,17 +964,86 @@ export default function FrontEndFunnel() {
         {/* Toolbar */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
           <div className="flex items-center justify-between flex-wrap gap-4">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 flex-wrap">
               <button
                 onClick={handleAddPage}
                 className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
               >
                 <Plus className="w-4 h-4" />
-                Add Page
+                Add Step
               </button>
               <span className="text-gray-500">
                 {(funnelPages || []).length} pages
               </span>
+              {/* Saved Funnels Dropdown */}
+              <div className="flex items-center gap-2">
+                <label htmlFor="saved-funnel-select" className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                  <FileStack className="w-4 h-4 text-amber-500" />
+                  Funnel salvato
+                </label>
+                <select
+                  id="saved-funnel-select"
+                  value={selectedSavedFunnelKey ?? ''}
+                  onChange={(e) => setSelectedSavedFunnelKey(e.target.value || null)}
+                  className="min-w-[220px] px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm bg-white"
+                >
+                  <option value="">— Seleziona un funnel —</option>
+                  {savedFunnelsLoading ? (
+                    <option disabled>Caricamento...</option>
+                  ) : (
+                    savedFunnels.map((group) => (
+                      <option key={group.key} value={group.key}>
+                        {group.funnelName} ({group.steps.length} step)
+                      </option>
+                    ))
+                  )}
+                </select>
+                {savedFunnels.length > 0 && (
+                  <button
+                    onClick={() => fetchSavedFunnels()}
+                    disabled={savedFunnelsLoading}
+                    className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                    title="Aggiorna funnel"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${savedFunnelsLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
+              </div>
+
+              {/* Affiliate Saved Funnels (Quiz Funnels) Dropdown */}
+              <div className="flex items-center gap-2">
+                <label htmlFor="affiliate-funnel-select" className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                  <BookOpen className="w-4 h-4 text-purple-500" />
+                  Quiz Funnel
+                </label>
+                <select
+                  id="affiliate-funnel-select"
+                  value={selectedAffiliateFunnelId ?? ''}
+                  onChange={(e) => setSelectedAffiliateFunnelId(e.target.value || null)}
+                  className="min-w-[220px] px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm bg-white"
+                >
+                  <option value="">— Seleziona quiz funnel —</option>
+                  {affiliateFunnelsLoading ? (
+                    <option disabled>Caricamento...</option>
+                  ) : (
+                    affiliateFunnels.map((af) => (
+                      <option key={af.id} value={af.id}>
+                        {af.funnel_name}{af.brand_name ? ` (${af.brand_name})` : ''} — {af.total_steps} step
+                      </option>
+                    ))
+                  )}
+                </select>
+                {affiliateFunnels.length > 0 && (
+                  <button
+                    onClick={() => fetchAffiliateData()}
+                    disabled={affiliateFunnelsLoading}
+                    className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                    title="Aggiorna quiz funnel"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${affiliateFunnelsLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
+              </div>
             </div>
             
             <div className="flex items-center gap-3">
@@ -789,6 +1233,212 @@ export default function FrontEndFunnel() {
               <p className="text-xs mt-1">Jobs will appear here when you launch a swipe</p>
             </div>
           )}
+
+          {/* Pagine del funnel selezionato - appare quando scegli dalla tendina */}
+          {selectedSavedFunnelKey && selectedSavedFunnel && (
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <Target className="w-4 h-4 text-amber-600" />
+                Pagine di &quot;{selectedSavedFunnel.funnelName}&quot;
+              </h3>
+              <div className="rounded-lg border border-amber-200 bg-amber-50/30 overflow-hidden">
+                <div className="p-3 space-y-2 max-h-72 overflow-y-auto">
+                  {selectedSavedFunnel.steps.map((step) => (
+                    <div
+                      key={step.id}
+                      className="flex items-center gap-3 p-2 rounded-lg bg-white border border-gray-100 hover:border-amber-200 transition-colors"
+                    >
+                      {step.screenshot_base64 && (
+                        <img
+                          src={`data:image/png;base64,${step.screenshot_base64}`}
+                          alt={`Step ${step.step_index}`}
+                          className="w-12 h-12 object-cover rounded shrink-0"
+                        />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          Step {step.step_index}: {step.title || step.url}
+                        </p>
+                        <a
+                          href={step.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-amber-600 hover:underline truncate block"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {step.url}
+                        </a>
+                      </div>
+                      <button
+                        onClick={() => handleUseStepForSwipe(step)}
+                        className="shrink-0 px-3 py-1.5 text-xs font-medium bg-amber-500 text-white rounded hover:bg-amber-600 transition-colors flex items-center gap-1"
+                      >
+                        <Wand2 className="w-3 h-3" />
+                        Usa per swipe
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Pagine del quiz funnel affiliato selezionato */}
+          {selectedAffiliateFunnelId && selectedAffiliateFunnel && (
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-purple-600" />
+                  Step di &quot;{selectedAffiliateFunnel.funnel_name}&quot;
+                  {selectedAffiliateFunnel.brand_name && (
+                    <span className="text-xs font-normal text-gray-500">({selectedAffiliateFunnel.brand_name})</span>
+                  )}
+                </h3>
+                <div className="flex items-center gap-2">
+                  {selectedAffiliateFunnel.funnel_type && (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                      {selectedAffiliateFunnel.funnel_type.replace(/_/g, ' ')}
+                    </span>
+                  )}
+                  {selectedAffiliateFunnel.category && selectedAffiliateFunnel.category !== 'other' && (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                      {selectedAffiliateFunnel.category.replace(/_/g, ' ')}
+                    </span>
+                  )}
+                  <button
+                    onClick={handleImportAllAffiliateSteps}
+                    disabled={affiliateFunnelSteps.length === 0}
+                    className="px-3 py-1.5 text-xs font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-1 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Importa tutti ({affiliateFunnelSteps.length})
+                  </button>
+                </div>
+              </div>
+
+              {/* Analysis summary */}
+              {selectedAffiliateFunnel.analysis_summary && (
+                <p className="text-xs text-gray-600 mb-3 bg-purple-50 rounded-lg p-2 border border-purple-100">
+                  {selectedAffiliateFunnel.analysis_summary}
+                </p>
+              )}
+
+              {/* Tags & Techniques */}
+              {(selectedAffiliateFunnel.tags.length > 0 || selectedAffiliateFunnel.persuasion_techniques.length > 0) && (
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {selectedAffiliateFunnel.tags.map((tag, i) => (
+                    <span key={`tag-${i}`} className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">
+                      {tag}
+                    </span>
+                  ))}
+                  {selectedAffiliateFunnel.persuasion_techniques.map((tech, i) => (
+                    <span key={`tech-${i}`} className="px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">
+                      {tech}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="rounded-lg border border-purple-200 bg-purple-50/30 overflow-hidden">
+                <div className="p-3 space-y-2 max-h-80 overflow-y-auto">
+                  {affiliateFunnelSteps.length === 0 ? (
+                    <p className="text-sm text-gray-500 text-center py-4">
+                      Nessuno step strutturato disponibile per questo funnel.
+                    </p>
+                  ) : (
+                    affiliateFunnelSteps.map((step, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-3 p-2.5 rounded-lg bg-white border border-gray-100 hover:border-purple-200 transition-colors"
+                      >
+                        {/* Step index badge */}
+                        <span className="w-7 h-7 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold shrink-0">
+                          {step.step_index}
+                        </span>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <p className="text-sm font-medium text-gray-900 truncate">
+                              {step.title || `Step ${step.step_index}`}
+                            </p>
+                            {step.step_type && (
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${
+                                step.step_type === 'quiz_question'
+                                  ? 'bg-indigo-100 text-indigo-700'
+                                  : step.step_type === 'lead_capture'
+                                    ? 'bg-green-100 text-green-700'
+                                    : step.step_type === 'checkout'
+                                      ? 'bg-orange-100 text-orange-700'
+                                      : step.step_type === 'upsell'
+                                        ? 'bg-red-100 text-red-700'
+                                        : 'bg-gray-100 text-gray-600'
+                              }`}>
+                                {step.step_type.replace(/_/g, ' ')}
+                              </span>
+                            )}
+                            {step.input_type && step.input_type !== 'none' && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-100 text-cyan-700 shrink-0">
+                                {step.input_type.replace(/_/g, ' ')}
+                              </span>
+                            )}
+                          </div>
+                          {step.description && (
+                            <p className="text-xs text-gray-500 truncate">{step.description}</p>
+                          )}
+                          {step.url && (
+                            <a
+                              href={step.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-purple-600 hover:underline truncate block"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {step.url}
+                            </a>
+                          )}
+                          {step.cta_text && (
+                            <span className="inline-block mt-1 px-2 py-0.5 text-[10px] bg-green-50 text-green-700 rounded border border-green-200">
+                              CTA: {step.cta_text}
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => handleUseAffiliateStepForSwipe(step, selectedAffiliateFunnel.funnel_name)}
+                          disabled={!step.url}
+                          className="shrink-0 px-3 py-1.5 text-xs font-medium bg-purple-500 text-white rounded hover:bg-purple-600 transition-colors flex items-center gap-1 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                        >
+                          <Wand2 className="w-3 h-3" />
+                          Usa per swipe
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {savedFunnelsError && (
+            <div className="mt-4 pt-4 border-t border-gray-200 flex items-center gap-2 text-red-600 text-sm">
+              {savedFunnelsError}
+              <button onClick={fetchSavedFunnels} className="text-amber-600 hover:underline">
+                Riprova
+              </button>
+            </div>
+          )}
+          {affiliateFunnelsError && (
+            <div className="mt-4 pt-4 border-t border-gray-200 flex items-center gap-2 text-red-600 text-sm">
+              {affiliateFunnelsError}
+              <button onClick={fetchAffiliateData} className="text-purple-600 hover:underline">
+                Riprova
+              </button>
+            </div>
+          )}
+          {!savedFunnelsLoading && !savedFunnelsError && savedFunnels.length === 0 && (
+            <p className="mt-4 pt-4 border-t border-gray-200 text-gray-500 text-sm">
+              Nessun funnel salvato. Usa il <a href="/funnel-analyzer" className="text-amber-600 hover:underline">Funnel Analyzer</a> per crawllare e salvare un funnel.
+            </p>
+          )}
         </div>
 
         {/* Excel-style Table */}
@@ -797,7 +1447,7 @@ export default function FrontEndFunnel() {
             <table className="excel-table text-sm">
               <thead>
                 <tr>
-                  <th className="w-10 px-2">#</th>
+                  <th className="w-10 px-2" title="Step order (1 = first page of funnel)">Step</th>
                   <th className="min-w-[120px]">Page</th>
                   <th className="min-w-[100px]">Type</th>
                   <th className="min-w-[120px]">Template</th>
@@ -808,21 +1458,21 @@ export default function FrontEndFunnel() {
                   <th className="min-w-[120px]">Result</th>
                   <th className="min-w-[100px]">Feedback</th>
                   <th className="w-16">AI</th>
-                  <th className="w-24">Actions</th>
+                  <th className="w-32">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {(funnelPages || []).length === 0 ? (
                   <tr>
                     <td colSpan={12} className="text-center py-8 text-gray-500">
-                      No pages yet. Click &quot;Add Page&quot; to start.
+                      Nessuno step. Clicca &quot;Add Step&quot; per iniziare dal Step 1.
                     </td>
                   </tr>
                 ) : (
                   (funnelPages || []).map((page, index) => (
                     <tr key={page.id}>
-                      {/* Row Number */}
-                      <td className="text-center text-gray-500 bg-gray-50">
+                      {/* Step number (sequential: 1 = first, 2 = second, etc.) */}
+                      <td className="text-center text-gray-500 bg-gray-50 font-medium">
                         {index + 1}
                       </td>
 
@@ -1135,6 +1785,28 @@ export default function FrontEndFunnel() {
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
                               <Wand2 className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                          {/* Clone Button (smooth-responder) */}
+                          <button
+                            onClick={() => openCloneModal(page)}
+                            disabled={
+                              cloningIds.includes(page.id) ||
+                              !page.urlToSwipe
+                            }
+                            className={`p-1 rounded transition-colors ${
+                              cloningIds.includes(page.id)
+                                ? 'bg-amber-100 text-amber-700'
+                                : !page.urlToSwipe
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                            }`}
+                            title="Clone & Rewrite"
+                          >
+                            {cloningIds.includes(page.id) ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
                             )}
                           </button>
                           {/* Vision Button */}
@@ -1915,6 +2587,249 @@ export default function FrontEndFunnel() {
                 className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clone Progress Floating Indicator */}
+      {cloneProgress && (
+        <div className="fixed bottom-6 right-6 z-40 bg-white rounded-xl shadow-2xl border border-amber-200 p-4 w-80">
+          <div className="flex items-center gap-3 mb-3">
+            <Loader2 className="w-5 h-5 text-amber-600 animate-spin" />
+            <span className="font-medium text-gray-900">
+              {cloneProgress.phase === 'extract' ? 'Extracting texts...' :
+               cloneProgress.phase === 'translating' ? 'Translating...' :
+               'Rewriting texts...'}
+            </span>
+          </div>
+          <div className="text-sm text-gray-600 mb-2">{cloneProgress.message}</div>
+          {cloneProgress.totalTexts > 0 && (
+            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-amber-500 transition-all duration-500"
+                style={{ width: `${Math.round((cloneProgress.processedTexts / cloneProgress.totalTexts) * 100)}%` }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Clone Configuration Modal */}
+      {cloneModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-amber-500 to-orange-500">
+              <div className="flex items-center gap-3">
+                <Copy className="w-6 h-6 text-white" />
+                <div>
+                  <h2 className="text-xl font-bold text-white">Clone & Rewrite</h2>
+                  <p className="text-white/80 text-sm truncate max-w-sm">{cloneModal.url}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCloneModal({ isOpen: false, pageId: '', pageName: '', url: '' })}
+                className="text-white/80 hover:text-white"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Mode Tabs */}
+            <div className="flex border-b border-gray-200">
+              <button
+                onClick={() => setCloneMode('identical')}
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                  cloneMode === 'identical'
+                    ? 'text-amber-700 border-b-2 border-amber-500 bg-amber-50'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Copy className="w-4 h-4" />
+                Clone Identico
+              </button>
+              <button
+                onClick={() => setCloneMode('rewrite')}
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                  cloneMode === 'rewrite'
+                    ? 'text-amber-700 border-b-2 border-amber-500 bg-amber-50'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Wand2 className="w-4 h-4" />
+                Riscrivi per Prodotto
+              </button>
+              <button
+                onClick={() => setCloneMode('translate')}
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                  cloneMode === 'translate'
+                    ? 'text-amber-700 border-b-2 border-amber-500 bg-amber-50'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Globe className="w-4 h-4" />
+                Traduci
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {/* Identical Mode */}
+              {cloneMode === 'identical' && (
+                <div className="text-center py-8">
+                  <Copy className="w-16 h-16 text-amber-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">Clone Identico</h3>
+                  <p className="text-gray-500 mb-4">
+                    Scarica l&apos;HTML esatto della pagina senza modifiche.
+                    <br />
+                    Utile per analizzare la struttura e come base per riscritture successive.
+                  </p>
+                  <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 break-all">
+                    {cloneModal.url}
+                  </div>
+                </div>
+              )}
+
+              {/* Rewrite Mode */}
+              {cloneMode === 'rewrite' && (
+                <div className="space-y-4">
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                    La struttura HTML della pagina viene mantenuta identica. Solo i testi vengono riscritti da Claude AI per il tuo prodotto.
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Nome Prodotto *</label>
+                      <input
+                        type="text"
+                        value={cloneConfig.productName}
+                        onChange={(e) => setCloneConfig({ ...cloneConfig, productName: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none"
+                        placeholder="Es: SuperGlow Serum"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Framework</label>
+                      <select
+                        value={cloneConfig.framework}
+                        onChange={(e) => setCloneConfig({ ...cloneConfig, framework: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none"
+                      >
+                        <option value="">Nessuno</option>
+                        <option value="AIDA">AIDA (Attention-Interest-Desire-Action)</option>
+                        <option value="PAS">PAS (Problem-Agitate-Solve)</option>
+                        <option value="BAB">BAB (Before-After-Bridge)</option>
+                        <option value="4Ps">4Ps (Promise-Picture-Proof-Push)</option>
+                        <option value="QUEST">QUEST (Qualify-Understand-Educate-Stimulate-Transition)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Descrizione Prodotto *</label>
+                    <textarea
+                      value={cloneConfig.productDescription}
+                      onChange={(e) => setCloneConfig({ ...cloneConfig, productDescription: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none"
+                      rows={3}
+                      placeholder="Descrivi il tuo prodotto, i suoi benefici e caratteristiche..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Target Audience</label>
+                    <input
+                      type="text"
+                      value={cloneConfig.target}
+                      onChange={(e) => setCloneConfig({ ...cloneConfig, target: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none"
+                      placeholder="Es: Donne 30-50 anni attente alla skincare"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Istruzioni Custom (opzionale)</label>
+                    <textarea
+                      value={cloneConfig.customPrompt}
+                      onChange={(e) => setCloneConfig({ ...cloneConfig, customPrompt: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none"
+                      rows={2}
+                      placeholder="Es: Tono lussuoso ma accessibile, in italiano..."
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Translate Mode */}
+              {cloneMode === 'translate' && (
+                <div className="space-y-4">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+                    Traduce tutti i testi dell&apos;HTML clonato o riscritto in un&apos;altra lingua.
+                    Serve prima aver clonato la pagina (Clone Identico o Riscrivi).
+                  </div>
+
+                  {(() => {
+                    const page = (funnelPages || []).find(p => p.id === cloneModal.pageId);
+                    const hasHtml = page?.clonedData?.html || page?.swipedData?.html;
+                    return hasHtml ? (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800 flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4" />
+                        HTML disponibile ({((page?.swipedData?.html || page?.clonedData?.html)?.length || 0).toLocaleString()} chars)
+                      </div>
+                    ) : (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800 flex items-center gap-2">
+                        <XCircle className="w-4 h-4" />
+                        Nessun HTML disponibile. Clona la pagina prima.
+                      </div>
+                    );
+                  })()}
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Lingua Target</label>
+                    <select
+                      value={cloneConfig.targetLanguage}
+                      onChange={(e) => setCloneConfig({ ...cloneConfig, targetLanguage: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none"
+                    >
+                      <option value="Italiano">Italiano</option>
+                      <option value="Inglese">Inglese (English)</option>
+                      <option value="Spagnolo">Spagnolo (Español)</option>
+                      <option value="Francese">Francese (Français)</option>
+                      <option value="Tedesco">Tedesco (Deutsch)</option>
+                      <option value="Portoghese">Portoghese (Português)</option>
+                      <option value="Olandese">Olandese (Nederlands)</option>
+                      <option value="Polacco">Polacco (Polski)</option>
+                      <option value="Rumeno">Rumeno (Română)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-3">
+              <button
+                onClick={() => setCloneModal({ isOpen: false, pageId: '', pageName: '', url: '' })}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Annulla
+              </button>
+              <button
+                onClick={handleClone}
+                disabled={
+                  (cloneMode === 'rewrite' && (!cloneConfig.productName || !cloneConfig.productDescription)) ||
+                  (cloneMode === 'translate' && !(() => {
+                    const page = (funnelPages || []).find(p => p.id === cloneModal.pageId);
+                    return page?.clonedData?.html || page?.swipedData?.html;
+                  })())
+                }
+                className="flex items-center gap-2 px-6 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              >
+                {cloneMode === 'identical' && <><Copy className="w-4 h-4" /> Clona</>}
+                {cloneMode === 'rewrite' && <><Wand2 className="w-4 h-4" /> Clona &amp; Riscrivi</>}
+                {cloneMode === 'translate' && <><Globe className="w-4 h-4" /> Traduci</>}
               </button>
             </div>
           </div>

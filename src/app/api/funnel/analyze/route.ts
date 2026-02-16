@@ -102,17 +102,35 @@ Fornisci un'analisi dettagliata includendo:
 5. Aree di miglioramento
 6. Suggerimenti specifici per ottimizzare la conversione`;
 
-    // Chiama l'API copy_analyzer
-    const analyzerResponse = await fetch(
-      'https://claude-code-agents.fly.dev/api/agent/run/copy_analyzer',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ prompt }),
+    // Chiama l'API copy_analyzer (timeout 30s)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    let analyzerResponse: Response;
+    try {
+      analyzerResponse = await fetch(
+        'https://claude-code-agents.fly.dev/api/agent/run/copy_analyzer',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt }),
+          signal: controller.signal,
+        }
+      );
+    } catch (fetchErr) {
+      clearTimeout(timeout);
+      const msg = fetchErr instanceof Error ? fetchErr.message : 'Errore';
+      if (msg.includes('abort')) {
+        return NextResponse.json(
+          { error: 'Timeout: l\'API copy_analyzer esterna non ha risposto in 30 secondi' },
+          { status: 504 }
+        );
       }
-    );
+      return NextResponse.json(
+        { error: `Impossibile raggiungere copy_analyzer: ${msg}` },
+        { status: 503 }
+      );
+    }
+    clearTimeout(timeout);
 
     if (!analyzerResponse.ok) {
       return NextResponse.json(

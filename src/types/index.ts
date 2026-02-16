@@ -436,6 +436,12 @@ export interface FunnelCrawlStep {
   domLength: number;
   redirectFrom?: string;
   timestamp: string;
+  /** True when step comes from quiz mode (same URL, content changed via JS) */
+  isQuizStep?: boolean;
+  /** Human-readable label for quiz step (e.g. "Step 1: How old are you?") */
+  quizStepLabel?: string;
+  /** Main text content (e.g. when single-page crawl for landing analyzer) */
+  contentText?: string;
 }
 
 export interface FunnelCrawlOptions {
@@ -461,6 +467,8 @@ export interface FunnelCrawlResult {
   durationMs: number;
   error?: string;
   visitedUrls: string[];
+  /** True when crawl was run in quiz mode (multi-step same-URL) */
+  isQuizFunnel?: boolean;
 }
 
 // =====================================================
@@ -480,6 +488,98 @@ export type FunnelPageType =
   | 'checkout'
   | 'other';
 
+// =====================================================
+// BROWSER AGENTICO — Gemini Computer Use + Playwright
+// =====================================================
+
+/** Azione Computer Use suggerita dal modello */
+export interface ComputerUseAction {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface AgenticCrawlStep {
+  stepIndex: number;
+  url: string;
+  title: string;
+  screenshotBase64?: string;
+  /** Azione(i) eseguite in questo turn dal modello Computer Use */
+  actions?: ComputerUseAction[];
+  /** Testo di reasoning/pensiero del modello */
+  modelThought?: string;
+  /** Se l'azione e' stata eseguita con successo */
+  actionExecuted?: boolean;
+  /** Errore nell'esecuzione dell'azione */
+  actionError?: string;
+  /** Timestamp dello step */
+  timestamp?: string;
+}
+
+export interface AgenticCrawlResult {
+  success: boolean;
+  entryUrl: string;
+  steps: AgenticCrawlStep[];
+  totalSteps: number;
+  durationMs: number;
+  error?: string;
+  /** Motivo per cui il crawl si e' fermato */
+  stopReason?: string;
+}
+
+// =====================================================
+// AFFILIATE BROWSER CHAT — Remote Agentic API
+// =====================================================
+
+export type AffiliateBrowserJobStatus =
+  | 'queued'
+  | 'starting'
+  | 'running'
+  | 'completed'
+  | 'max_turns'
+  | 'blocked'
+  | 'error';
+
+export interface AffiliateBrowserJob {
+  id: string;
+  status: AffiliateBrowserJobStatus;
+  prompt: string;
+  startUrl: string;
+  maxTurns: number;
+  currentTurn: number;
+  turnsUsed: number;
+  currentUrl: string;
+  lastActions: string[];
+  lastText: string;
+  debugUrl: string | null;
+  result: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+export type AffiliateChatRole = 'user' | 'agent' | 'system';
+
+export interface AffiliateChatMessage {
+  id: string;
+  role: AffiliateChatRole;
+  content: string;
+  timestamp: Date;
+  turnNumber?: number;
+}
+
+/** Statuses considered "finished" — stop polling when any of these */
+export const AFFILIATE_JOB_FINISHED_STATUSES: AffiliateBrowserJobStatus[] = [
+  'completed',
+  'max_turns',
+  'blocked',
+  'error',
+];
+
+// =====================================================
+// FUNNEL VISION ANALYSIS (AI extraction per pagina)
+// =====================================================
+
 export interface FunnelPageVisionAnalysis {
   stepIndex: number;
   url: string;
@@ -488,6 +588,8 @@ export interface FunnelPageVisionAnalysis {
   subheadline: string | null;
   body_copy: string | null;
   cta_text: string[];
+  /** Principali CTA che portano allo step successivo del funnel (es. Acquista Ora, Vai al checkout) */
+  next_step_ctas: string[];
   offer_details: string | null;
   price_points: string[];
   urgency_elements: string[];
@@ -498,3 +600,171 @@ export interface FunnelPageVisionAnalysis {
   raw?: string;
   error?: string;
 }
+
+// =====================================================
+// BRANDING GENERATOR — AI-powered branding from product + reference funnel
+// =====================================================
+
+/** Informazioni prodotto per la generazione branding */
+export interface BrandingProductInput {
+  name: string;
+  description: string;
+  price: number;
+  benefits: string[];
+  ctaText: string;
+  ctaUrl: string;
+  brandName: string;
+  imageUrl?: string;
+}
+
+/** Step del funnel di riferimento con la sua analisi vision */
+export interface BrandingReferenceFunnelStep {
+  stepIndex: number;
+  url: string;
+  title: string;
+  pageType: string;
+  isQuizStep?: boolean;
+  quizStepLabel?: string;
+  visionAnalysis?: {
+    page_type: string;
+    headline: string | null;
+    subheadline: string | null;
+    body_copy: string | null;
+    cta_text: string[];
+    next_step_ctas: string[];
+    offer_details: string | null;
+    price_points: string[];
+    urgency_elements: string[];
+    social_proof: string[];
+    persuasion_techniques_used: string[];
+  };
+}
+
+/** Funnel di riferimento completo (quiz o standard) da cui estrarre la struttura */
+export interface BrandingReferenceFunnel {
+  funnelName: string;
+  entryUrl: string;
+  funnelType: string;
+  steps: BrandingReferenceFunnelStep[];
+  analysisSummary?: string;
+  persuasionTechniques?: string[];
+  leadCaptureMethod?: string;
+  notableElements?: string[];
+}
+
+/** Opzioni di generazione branding */
+export interface BrandingGenerationOptions {
+  provider?: 'claude' | 'gemini';
+  tone?: 'professional' | 'casual' | 'urgent' | 'friendly' | 'luxury' | 'scientific' | 'empathetic';
+  targetAudience?: string;
+  niche?: string;
+  language?: string;
+}
+
+/** Input completo per la generazione del branding */
+export interface BrandingGenerationInput {
+  product: BrandingProductInput;
+  referenceFunnel: BrandingReferenceFunnel;
+  options?: BrandingGenerationOptions;
+}
+
+/** Palette colori generata */
+export interface BrandingColorPalette {
+  primary: string;
+  secondary: string;
+  accent: string;
+  background: string;
+  text: string;
+  ctaBackground: string;
+  ctaText: string;
+}
+
+/** Identità di brand generata */
+export interface BrandIdentity {
+  brandName: string;
+  tagline: string;
+  voiceTone: string;
+  emotionalHook: string;
+  uniqueSellingProposition: string;
+  colorPalette: BrandingColorPalette;
+  typography: {
+    headingStyle: string;
+    bodyStyle: string;
+  };
+}
+
+/** Contenuto branding per uno step specifico del funnel */
+export interface BrandingStepContent {
+  stepIndex: number;
+  originalPageType: string;
+  headline: string;
+  subheadline: string;
+  bodyCopy: string;
+  ctaTexts: string[];
+  nextStepCtas: string[];
+  offerDetails: string | null;
+  pricePresentation: string;
+  urgencyElements: string[];
+  socialProof: string[];
+  persuasionTechniques: string[];
+  quizQuestion?: string;
+  quizOptions?: string[];
+  quizOptionSubtexts?: string[];
+}
+
+/** Branding specifico per quiz funnel */
+export interface QuizBranding {
+  quizTitle: string;
+  quizSubtitle: string;
+  quizIntroText: string;
+  progressBarLabel: string;
+  resultPageHeadline: string;
+  resultPageSubheadline: string;
+  resultPageBodyCopy: string;
+  personalizationHook: string;
+}
+
+/** Elementi globali del branding (usati su tutte le pagine) */
+export interface BrandingGlobalElements {
+  socialProofStatements: string[];
+  urgencyElements: string[];
+  trustBadges: string[];
+  guaranteeText: string;
+  disclaimerText: string;
+  footerCopyright: string;
+  headerText: string;
+}
+
+/** Output completo della generazione branding */
+export interface GeneratedBranding {
+  brandIdentity: BrandIdentity;
+  funnelSteps: BrandingStepContent[];
+  globalElements: BrandingGlobalElements;
+  quizBranding?: QuizBranding;
+  swipeInstructions: string;
+  metadata: {
+    provider: string;
+    model: string;
+    generatedAt: string;
+    referenceFunnelName: string;
+    referenceFunnelType: string;
+    productName: string;
+    language: string;
+    tone: string;
+  };
+}
+
+export type BrandingGenerationStatus = 'idle' | 'generating' | 'completed' | 'failed';
+
+// =====================================================
+// SCHEDULED BROWSER JOBS — Job automatici programmabili
+// =====================================================
+
+export type ScheduledJobFrequency = 'daily' | 'weekly' | 'bi_weekly' | 'monthly';
+
+export const SCHEDULED_JOB_FREQUENCY_OPTIONS: { value: ScheduledJobFrequency; label: string; description: string }[] = [
+  { value: 'daily', label: 'Giornaliero', description: 'Ogni giorno alle 6:00 UTC' },
+  { value: 'weekly', label: 'Settimanale', description: 'Ogni 7 giorni' },
+  { value: 'bi_weekly', label: 'Ogni 2 settimane', description: 'Ogni 14 giorni' },
+  { value: 'monthly', label: 'Mensile', description: 'Ogni 30 giorni' },
+];

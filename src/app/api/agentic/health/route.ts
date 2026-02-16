@@ -1,8 +1,17 @@
 import { NextResponse } from 'next/server';
 
 const AGENTIC_API_BASE = process.env.AGENTIC_API_URL || 'http://localhost:8000';
+const IS_LOCALHOST = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(AGENTIC_API_BASE);
 
 export async function GET() {
+  const isDeployed = !!(process.env.FLY_APP_NAME || process.env.VERCEL_URL);
+  if (IS_LOCALHOST && isDeployed) {
+    return NextResponse.json({
+      success: false,
+      error: 'AGENTIC_API_URL non configurato. Su Fly.io/Vercel non puoi usare localhost. Imposta AGENTIC_API_URL con l\'URL pubblico del server agentic.',
+      server: AGENTIC_API_BASE,
+    }, { status: 503 });
+  }
   try {
     const response = await fetch(`${AGENTIC_API_BASE}/health`, {
       method: 'GET',

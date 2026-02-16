@@ -37,13 +37,14 @@ import {
 
 export default function FunnelAnalyzerPage() {
   const [entryUrl, setEntryUrl] = useState('');
-  const [headless, setHeadless] = useState(true);
   const [maxSteps, setMaxSteps] = useState(15);
   const [maxDepth, setMaxDepth] = useState(3);
   const [followSameOriginOnly, setFollowSameOriginOnly] = useState(true);
   const [captureScreenshots, setCaptureScreenshots] = useState(true);
   const [captureNetwork, setCaptureNetwork] = useState(true);
   const [captureCookies, setCaptureCookies] = useState(true);
+  const [quizMode, setQuizMode] = useState(false);
+  const [quizMaxSteps, setQuizMaxSteps] = useState(20);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<FunnelCrawlResult | null>(null);
   const [expandedStep, setExpandedStep] = useState<number | null>(null);
@@ -61,35 +62,106 @@ export default function FunnelAnalyzerPage() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState<number | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveVisionLoading, setSaveVisionLoading] = useState(false);
+  const [saveVisionSuccess, setSaveVisionSuccess] = useState<number | null>(null);
+  const [saveVisionError, setSaveVisionError] = useState<string | null>(null);
+
+  const [crawlProgress, setCrawlProgress] = useState<{ current: number; total: number } | null>(null);
 
   const runCrawl = async () => {
     if (!entryUrl.trim()) return;
     setLoading(true);
     setResult(null);
+    setCrawlProgress(null);
     try {
-      const res = await fetch('/api/funnel-analyzer/crawl', {
+      const startRes = await fetch('/api/funnel-analyzer/crawl/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           entryUrl: entryUrl.trim(),
-          headless,
           maxSteps,
           maxDepth,
           followSameOriginOnly,
           captureScreenshots,
           captureNetwork,
           captureCookies,
+          quizMode,
+          quizMaxSteps,
           viewportWidth: 1280,
           viewportHeight: 720,
         }),
       });
-      const data: FunnelCrawlResult = await res.json();
-      setResult(data);
-      setSelectedSteps(new Set());
-      setSaveSuccess(null);
-      setSaveError(null);
-      if (data.steps.length > 0) setExpandedStep(1);
+      const startData = await startRes.json().catch(() => ({}));
+      if (!startRes.ok || !startData.jobId) {
+        setResult({
+          success: false,
+          entryUrl: entryUrl.trim(),
+          steps: [],
+          totalSteps: 0,
+          durationMs: 0,
+          visitedUrls: [],
+          error: (startData as { error?: string }).error || 'Impossibile avviare il crawl',
+        });
+        setLoading(false);
+        return;
+      }
+      const jobId = startData.jobId;
+
+      const pollStatus = async (): Promise<void> => {
+        const statusRes = await fetch(`/api/funnel-analyzer/crawl/status/${jobId}`);
+        const statusData = await statusRes.json().catch(() => ({}));
+        if (statusRes.status === 404 || statusData.status === 'not_found') {
+          setResult({
+            success: false,
+            entryUrl: entryUrl.trim(),
+            steps: [],
+            totalSteps: 0,
+            durationMs: 0,
+            visitedUrls: [],
+            error: 'Job non trovato',
+          });
+          setCrawlProgress(null);
+          setLoading(false);
+          return;
+        }
+        if (statusData.currentStep != null && statusData.totalSteps != null) {
+          setCrawlProgress({ current: statusData.currentStep, total: statusData.totalSteps });
+        }
+        if (statusData.status === 'completed' && statusData.result) {
+          setResult(statusData.result);
+          setSelectedSteps(new Set());
+          setSaveSuccess(null);
+          setSaveError(null);
+          if (statusData.result.steps?.length) setExpandedStep(1);
+          if (statusData.result.isQuizFunnel && !funnelTag.trim()) setFunnelTag('quiz_funnel');
+          setCrawlProgress(null);
+          setLoading(false);
+          return;
+        }
+        if (statusData.status === 'failed') {
+          setResult({
+            success: false,
+            entryUrl: entryUrl.trim(),
+            steps: statusData.result?.steps ?? [],
+            totalSteps: statusData.result?.totalSteps ?? 0,
+            durationMs: statusData.result?.durationMs ?? 0,
+            visitedUrls: statusData.result?.visitedUrls ?? [],
+            error: statusData.error || 'Crawl fallito',
+          });
+          setCrawlProgress(null);
+          setLoading(false);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        return pollStatus();
+      };
+      await pollStatus();
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Request failed';
+      const friendly =
+        msg === 'Failed to fetch'
+          ? 'Errore di rete: impossibile raggiungere il server. Controlla la connessione o verifica lo stato con /api/health'
+          : msg;
       setResult({
         success: false,
         entryUrl: entryUrl.trim(),
@@ -97,8 +169,9 @@ export default function FunnelAnalyzerPage() {
         totalSteps: 0,
         durationMs: 0,
         visitedUrls: [],
-        error: err instanceof Error ? err.message : 'Request failed',
+        error: friendly,
       });
+      setCrawlProgress(null);
     } finally {
       setLoading(false);
     }
@@ -148,6 +221,7 @@ export default function FunnelAnalyzerPage() {
           funnelName: funnelName.trim() || undefined,
           funnelTag: funnelTag.trim() || undefined,
           steps: toSave,
+          visionAnalyses: visionAnalyses ?? undefined,
         }),
       });
       const data = await res.json();
@@ -158,6 +232,36 @@ export default function FunnelAnalyzerPage() {
       setSaveError(err instanceof Error ? err.message : 'Errore di salvataggio');
     } finally {
       setSaveLoading(false);
+    }
+  };
+
+  const saveVisionToSupabase = async () => {
+    if (!result || !visionAnalyses?.length) return;
+    const name = funnelName.trim();
+    if (!name) {
+      setSaveVisionError('Inserisci il nome funnel (come quando hai salvato gli step) per aggiornare le analisi AI.');
+      return;
+    }
+    setSaveVisionLoading(true);
+    setSaveVisionSuccess(null);
+    setSaveVisionError(null);
+    try {
+      const res = await fetch('/api/funnel-analyzer/save-vision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entryUrl: result.entryUrl,
+          funnelName: name,
+          visionAnalyses,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Salvataggio analisi fallito');
+      setSaveVisionSuccess(data.updated ?? 0);
+    } catch (err) {
+      setSaveVisionError(err instanceof Error ? err.message : 'Errore salvataggio analisi AI');
+    } finally {
+      setSaveVisionLoading(false);
     }
   };
 
@@ -182,12 +286,17 @@ export default function FunnelAnalyzerPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ steps: withScreenshot, provider: visionProvider }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Vision request failed');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
       setVisionAnalyses(data.analyses || []);
       setActiveTab('vision');
     } catch (err) {
-      setVisionError(err instanceof Error ? err.message : 'Vision analysis failed');
+      const msg = err instanceof Error ? err.message : 'Vision analysis failed';
+      setVisionError(
+        msg === 'Failed to fetch'
+          ? 'Errore di rete. Verifica che GOOGLE_GEMINI_API_KEY o ANTHROPIC_API_KEY siano configurate (fly secrets set)'
+          : msg
+      );
     } finally {
       setVisionLoading(false);
     }
@@ -199,6 +308,15 @@ export default function FunnelAnalyzerPage() {
         title="Funnel Analyzer"
         subtitle="Browser automation: crawl funnel, screenshot ogni step, link/CTA/form, network e cookie"
       />
+      <a
+        href="/api/health"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mb-4 inline-flex items-center gap-2 text-sm text-gray-500 hover:text-emerald-600"
+      >
+        <AlertCircle className="w-4 h-4" />
+        Diagnostica connettività e API
+      </a>
 
       <div className="p-6">
         {/* URL & Options */}
@@ -231,15 +349,6 @@ export default function FunnelAnalyzerPage() {
             <div>
               <h4 className="text-sm font-medium text-gray-700 mb-3">Browser & Limiti</h4>
               <div className="space-y-3">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={headless}
-                    onChange={(e) => setHeadless(e.target.checked)}
-                    className="w-4 h-4 text-emerald-600 rounded border-gray-300"
-                  />
-                  <span className="text-sm text-gray-700">Headless (nessuna finestra)</span>
-                </label>
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-600">Max step:</span>
                   <input
@@ -305,6 +414,40 @@ export default function FunnelAnalyzerPage() {
                 </label>
               </div>
             </div>
+
+            <div className="border-t border-gray-200 pt-4 mt-4">
+              <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-violet-500" />
+                Modalità Quiz (step senza cambio URL)
+              </h4>
+              <p className="text-sm text-gray-500 mb-3">
+                Per quiz come Glov Beauty dove gli step cambiano con JavaScript ma l&apos;URL resta uguale
+              </p>
+              <div className="flex items-center gap-4 flex-wrap">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={quizMode}
+                    onChange={(e) => setQuizMode(e.target.checked)}
+                    className="w-4 h-4 text-violet-600 rounded border-gray-300"
+                  />
+                  <span className="text-sm text-gray-700 font-medium">Attiva modalità quiz</span>
+                </label>
+                {quizMode && (
+                  <label className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600">Max step:</span>
+                    <input
+                      type="number"
+                      min={3}
+                      max={35}
+                      value={quizMaxSteps}
+                      onChange={(e) => setQuizMaxSteps(Math.min(35, Math.max(3, Number(e.target.value) || 10)))}
+                      className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
+                    />
+                  </label>
+                )}
+              </div>
+            </div>
           </div>
 
           <button
@@ -335,6 +478,12 @@ export default function FunnelAnalyzerPage() {
                   <span className="flex items-center gap-2 px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-medium">
                     <XCircle className="w-4 h-4" />
                     Errore
+                  </span>
+                )}
+                {result.isQuizFunnel && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 bg-violet-100 text-violet-700 rounded-full text-xs font-medium">
+                    <MessageSquare className="w-3 h-3" />
+                    Quiz funnel
                   </span>
                 )}
                 <span className="flex items-center gap-1 text-sm text-gray-500">
@@ -526,6 +675,40 @@ export default function FunnelAnalyzerPage() {
                 )}
                 {!visionLoading && visionAnalyses && visionAnalyses.length > 0 && (
                   <div className="space-y-6">
+                    <div className="flex flex-wrap items-center gap-3 pb-4 border-b border-gray-200">
+                      <span className="text-sm font-medium text-gray-700">Salva analisi AI sul database</span>
+                      <input
+                        type="text"
+                        value={funnelName}
+                        onChange={(e) => setFunnelName(e.target.value)}
+                        placeholder="Nome funnel (come negli step salvati)"
+                        className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm w-56 focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                      />
+                      <button
+                        type="button"
+                        onClick={saveVisionToSupabase}
+                        disabled={saveVisionLoading}
+                        className="flex items-center gap-2 px-3 py-1.5 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {saveVisionLoading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <CheckCircle className="w-4 h-4" />
+                        )}
+                        Salva analisi AI
+                      </button>
+                      {saveVisionSuccess !== null && (
+                        <span className="text-sm text-green-600 font-medium">
+                          Aggiornate {saveVisionSuccess} analisi su Supabase
+                        </span>
+                      )}
+                      {saveVisionError && (
+                        <span className="text-sm text-red-600">{saveVisionError}</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 -mt-2">
+                      Gli step devono essere già salvati con lo stesso nome funnel. Oppure salva gli step dal tab Crawl includendo le analisi AI.
+                    </p>
                     {visionAnalyses.map((a) => (
                       <VisionAnalysisCard key={a.stepIndex} analysis={a} />
                     ))}
@@ -541,10 +724,14 @@ export default function FunnelAnalyzerPage() {
             <div className="bg-white rounded-xl p-8 shadow-2xl flex flex-col items-center">
               <Loader2 className={`w-12 h-12 animate-spin mb-4 ${visionLoading ? 'text-violet-500' : 'text-emerald-500'}`} />
               <p className="text-gray-900 font-medium">
-                {visionLoading ? 'Analisi Vision (Claude/Gemini)...' : 'Crawl in corso...'}
+                {visionLoading ? 'Analisi Vision (Claude/Gemini)...' : 'Crawl in corso (background)...'}
               </p>
               <p className="text-gray-500 text-sm mt-2">
-                {visionLoading ? 'Estrazione copy, tipo pagina, offerta e tech stack' : 'Navigazione, screenshot e raccolta dati'}
+                {visionLoading
+                  ? 'Estrazione copy, tipo pagina, offerta e tech stack'
+                  : crawlProgress
+                    ? `Step ${crawlProgress.current} / ${crawlProgress.total}`
+                    : 'Navigazione, screenshot e raccolta dati'}
               </p>
             </div>
           </div>
@@ -592,7 +779,14 @@ function StepCard({
             <ChevronDown className="w-5 h-5 text-gray-500 shrink-0" />
           )}
           <span className="font-medium text-gray-900">Step {step.stepIndex}</span>
-          <span className="text-gray-500 truncate flex-1">{step.title || step.url}</span>
+          <span className="text-gray-500 truncate flex-1">
+            {step.quizStepLabel || step.title || step.url}
+          </span>
+          {step.isQuizStep && (
+            <span className="text-xs bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded shrink-0">
+              quiz
+            </span>
+          )}
           <a
             href={step.url}
             target="_blank"
@@ -840,6 +1034,16 @@ function VisionAnalysisCard({ analysis }: { analysis: FunnelPageVisionAnalysis }
               <ul className="flex flex-wrap gap-1">
                 {analysis.cta_text.map((t, i) => (
                   <li key={i} className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-xs">{t}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {analysis.next_step_ctas?.length > 0 && (
+            <div>
+              <h4 className="font-medium text-gray-700 mb-1 flex items-center gap-1"><MousePointer className="w-4 h-4" /> CTA verso step successivo</h4>
+              <ul className="flex flex-wrap gap-1">
+                {analysis.next_step_ctas.map((t, i) => (
+                  <li key={i} className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs font-medium">{t}</li>
                 ))}
               </ul>
             </div>

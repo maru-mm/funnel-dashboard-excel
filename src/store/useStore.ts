@@ -440,7 +440,7 @@ export const useStore = create<Store>()((set, get) => ({
       } as Parameters<typeof supabaseOps.createFunnelPage>[0]);
       
       set((state) => ({
-        funnelPages: [dbFunnelPageToApp(created), ...state.funnelPages],
+        funnelPages: [...state.funnelPages, dbFunnelPageToApp(created)],
       }));
     } catch (error) {
       console.error('Error adding funnel page:', error);

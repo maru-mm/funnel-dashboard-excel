@@ -14,6 +14,14 @@ import type {
   PostPurchasePageUpdate,
   FunnelCrawlStepRow,
   FunnelCrawlStepInsert,
+  AffiliateBrowserChat,
+  AffiliateBrowserChatInsert,
+  AffiliateBrowserChatUpdate,
+  AffiliateSavedFunnel,
+  AffiliateSavedFunnelInsert,
+  ScheduledBrowserJob,
+  ScheduledBrowserJobInsert,
+  ScheduledBrowserJobUpdate,
 } from '@/types/database';
 
 // =====================================================
@@ -140,7 +148,7 @@ export async function fetchFunnelPages(): Promise<FunnelPage[]> {
   const { data, error } = await supabase
     .from('funnel_pages')
     .select('*')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: true }); // oldest first = Step 1 at top
   
   if (error) {
     console.error('Error fetching funnel pages:', error);
@@ -252,6 +260,9 @@ export async function deletePostPurchasePage(id: string): Promise<void> {
 // FUNNEL CRAWL STEPS (Funnel Analyzer - salvataggio step)
 // =====================================================
 
+/** Analisi Vision AI da salvare per step (stepIndex -> analisi) */
+export type VisionAnalysisMap = Record<number, Record<string, unknown>>;
+
 export async function createFunnelCrawlSteps(
   entryUrl: string,
   funnelName: string,
@@ -269,7 +280,10 @@ export async function createFunnelCrawlSteps(
     redirectFrom?: string;
     timestamp: string;
     screenshotBase64?: string;
-  }>
+    isQuizStep?: boolean;
+    quizStepLabel?: string;
+  }>,
+  visionAnalysesByStep?: VisionAnalysisMap
 ): Promise<{ count: number; ids: string[] }> {
   const rows: FunnelCrawlStepInsert[] = steps.map((s) => ({
     funnel_name: funnelName.trim() || 'Senza nome',
@@ -287,8 +301,11 @@ export async function createFunnelCrawlSteps(
       domLength: s.domLength,
       redirectFrom: s.redirectFrom,
       timestamp: s.timestamp,
+      isQuizStep: s.isQuizStep,
+      quizStepLabel: s.quizStepLabel,
     },
     screenshot_base64: s.screenshotBase64 ?? null,
+    vision_analysis: visionAnalysesByStep?.[s.stepIndex] ?? null,
   }));
 
   const { data, error } = await supabase
@@ -342,4 +359,297 @@ export async function deleteFunnelCrawlStepsByFunnel(entryUrl: string, funnelNam
     console.error('Error deleting funnel crawl steps:', error);
     throw error;
   }
+}
+
+// =====================================================
+// VISION ANALYSIS (aggiorna step esistenti con analisi AI)
+// =====================================================
+
+export async function updateFunnelCrawlStepsVision(
+  entryUrl: string,
+  funnelName: string,
+  visionAnalyses: Array<{ stepIndex: number; analysis: Record<string, unknown> }>
+): Promise<{ updated: number }> {
+  if (visionAnalyses.length === 0) return { updated: 0 };
+  let updated = 0;
+  for (const { stepIndex, analysis } of visionAnalyses) {
+    const { error } = await supabase
+      .from('funnel_crawl_steps')
+      .update({ vision_analysis: analysis })
+      .eq('entry_url', entryUrl)
+      .eq('funnel_name', funnelName)
+      .eq('step_index', stepIndex);
+    if (!error) updated += 1;
+    if (error) console.error('Error updating vision for step', stepIndex, error);
+  }
+  return { updated };
+}
+
+// =====================================================
+// AFFILIATE BROWSER CHATS (salvataggio prompt e risultati)
+// =====================================================
+
+export async function createAffiliateBrowserChat(
+  chat: AffiliateBrowserChatInsert
+): Promise<AffiliateBrowserChat> {
+  const { data, error } = await supabase
+    .from('affiliate_browser_chats')
+    .insert(chat)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error creating affiliate browser chat:', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function updateAffiliateBrowserChat(
+  id: string,
+  updates: AffiliateBrowserChatUpdate
+): Promise<AffiliateBrowserChat> {
+  const { data, error } = await supabase
+    .from('affiliate_browser_chats')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error updating affiliate browser chat:', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function updateAffiliateBrowserChatByJobId(
+  jobId: string,
+  updates: AffiliateBrowserChatUpdate
+): Promise<AffiliateBrowserChat | null> {
+  const { data, error } = await supabase
+    .from('affiliate_browser_chats')
+    .update(updates)
+    .eq('job_id', jobId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error updating affiliate browser chat by job_id:', error);
+    return null;
+  }
+  return data;
+}
+
+export async function fetchAffiliateBrowserChats(): Promise<AffiliateBrowserChat[]> {
+  const { data, error } = await supabase
+    .from('affiliate_browser_chats')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching affiliate browser chats:', error);
+    throw error;
+  }
+  return data ?? [];
+}
+
+export async function fetchAffiliateBrowserChatByJobId(
+  jobId: string
+): Promise<AffiliateBrowserChat | null> {
+  const { data, error } = await supabase
+    .from('affiliate_browser_chats')
+    .select('*')
+    .eq('job_id', jobId)
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') return null;
+    console.error('Error fetching affiliate browser chat by job_id:', error);
+    return null;
+  }
+  return data;
+}
+
+// =====================================================
+// AFFILIATE SAVED FUNNELS (funnel strutturati da Claude)
+// =====================================================
+
+export async function createAffiliateSavedFunnel(
+  funnel: AffiliateSavedFunnelInsert
+): Promise<AffiliateSavedFunnel> {
+  const { data, error } = await supabase
+    .from('affiliate_saved_funnels')
+    .insert(funnel)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error creating affiliate saved funnel:', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function fetchAffiliateSavedFunnels(): Promise<AffiliateSavedFunnel[]> {
+  const { data, error } = await supabase
+    .from('affiliate_saved_funnels')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching affiliate saved funnels:', error);
+    throw error;
+  }
+  return data ?? [];
+}
+
+export async function fetchAffiliateSavedFunnelsByType(
+  funnelType: string
+): Promise<AffiliateSavedFunnel[]> {
+  const { data, error } = await supabase
+    .from('affiliate_saved_funnels')
+    .select('*')
+    .eq('funnel_type', funnelType)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching affiliate saved funnels by type:', error);
+    throw error;
+  }
+  return data ?? [];
+}
+
+export async function deleteAffiliateSavedFunnel(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('affiliate_saved_funnels')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting affiliate saved funnel:', error);
+    throw error;
+  }
+}
+
+// =====================================================
+// SCHEDULED BROWSER JOBS (job programmabili)
+// =====================================================
+
+export async function createScheduledBrowserJob(
+  job: ScheduledBrowserJobInsert
+): Promise<ScheduledBrowserJob> {
+  const { data, error } = await supabase
+    .from('scheduled_browser_jobs')
+    .insert(job)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error creating scheduled browser job:', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function fetchScheduledBrowserJobs(): Promise<ScheduledBrowserJob[]> {
+  const { data, error } = await supabase
+    .from('scheduled_browser_jobs')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching scheduled browser jobs:', error);
+    throw error;
+  }
+  return data ?? [];
+}
+
+export async function fetchActiveScheduledJobs(): Promise<ScheduledBrowserJob[]> {
+  const { data, error } = await supabase
+    .from('scheduled_browser_jobs')
+    .select('*')
+    .eq('is_active', true)
+    .order('next_run_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching active scheduled jobs:', error);
+    throw error;
+  }
+  return data ?? [];
+}
+
+export async function fetchDueScheduledJobs(): Promise<ScheduledBrowserJob[]> {
+  const { data, error } = await supabase
+    .from('scheduled_browser_jobs')
+    .select('*')
+    .eq('is_active', true)
+    .lte('next_run_at', new Date().toISOString())
+    .order('next_run_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching due scheduled jobs:', error);
+    throw error;
+  }
+  return data ?? [];
+}
+
+export async function updateScheduledBrowserJob(
+  id: string,
+  updates: ScheduledBrowserJobUpdate
+): Promise<ScheduledBrowserJob> {
+  const { data, error } = await supabase
+    .from('scheduled_browser_jobs')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error updating scheduled browser job:', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function deleteScheduledBrowserJob(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('scheduled_browser_jobs')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting scheduled browser job:', error);
+    throw error;
+  }
+}
+
+export async function toggleScheduledBrowserJob(id: string, isActive: boolean): Promise<ScheduledBrowserJob> {
+  return updateScheduledBrowserJob(id, { is_active: isActive });
+}
+
+/** Calcola il prossimo next_run_at in base alla frequency */
+export function calculateNextRunAt(frequency: string, fromDate?: Date): string {
+  const now = fromDate || new Date();
+  const next = new Date(now);
+
+  switch (frequency) {
+    case 'daily':
+      next.setDate(next.getDate() + 1);
+      break;
+    case 'weekly':
+      next.setDate(next.getDate() + 7);
+      break;
+    case 'bi_weekly':
+      next.setDate(next.getDate() + 14);
+      break;
+    case 'monthly':
+      next.setMonth(next.getMonth() + 1);
+      break;
+    default:
+      next.setDate(next.getDate() + 1);
+  }
+
+  next.setHours(6, 0, 0, 0);
+  return next.toISOString();
 }

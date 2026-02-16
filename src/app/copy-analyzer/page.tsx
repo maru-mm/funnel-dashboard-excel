@@ -12,25 +12,28 @@ import {
   Sparkles
 } from 'lucide-react';
 
-interface AgentResponse {
-  agent_id: string;
-  agent_type: string;
-  status: 'completed' | 'failed' | 'running';
-  prompt: string;
-  messages: Array<{ role: string; content: string }>;
+interface AnalysisResponse {
+  status: 'completed' | 'failed';
   result: string | null;
-  error: string | null;
-  started_at: string;
-  completed_at: string;
-  duration_seconds: number;
-  turns_used: number;
-  cost_estimate: number | null;
+  model: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+  };
+}
+
+interface PageContent {
+  title: string;
+  subHeadlines: string[];
+  ctaTexts: string[];
+  metaDescription: string;
 }
 
 interface AnalysisResult {
   headline: string;
   url: string;
-  analysis: AgentResponse;
+  pageContent: PageContent;
+  analysis: AnalysisResponse;
 }
 
 export default function CopyAnalyzerPage() {
@@ -197,77 +200,80 @@ export default function CopyAnalyzerPage() {
               </div>
             </div>
 
+            {/* Page Content Summary */}
+            {result.pageContent && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="bg-blue-100 p-2 rounded-lg">
+                    <FileText className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    Contenuto Estratto
+                  </h3>
+                </div>
+                <div className="space-y-3">
+                  {result.pageContent.metaDescription && (
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase font-medium mb-1">Meta Description</p>
+                      <p className="text-sm text-gray-700">{result.pageContent.metaDescription}</p>
+                    </div>
+                  )}
+                  {result.pageContent.subHeadlines.length > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase font-medium mb-1">Sub-Headlines</p>
+                      <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                        {result.pageContent.subHeadlines.map((h, i) => (
+                          <li key={i}>{h}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {result.pageContent.ctaTexts.length > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase font-medium mb-1">CTA Buttons</p>
+                      <div className="flex flex-wrap gap-2">
+                        {result.pageContent.ctaTexts.map((cta, i) => (
+                          <span key={i} className="px-3 py-1 bg-blue-50 text-blue-700 text-sm rounded-full border border-blue-200">
+                            {cta}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Analysis Result */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <div className="flex items-center gap-3 mb-4">
-                <div className={`p-2 rounded-lg ${result.analysis.status === 'completed' ? 'bg-purple-100' : 'bg-red-100'}`}>
-                  <FileText className={`w-5 h-5 ${result.analysis.status === 'completed' ? 'text-purple-600' : 'text-red-600'}`} />
+                <div className="bg-purple-100 p-2 rounded-lg">
+                  <Sparkles className="w-5 h-5 text-purple-600" />
                 </div>
                 <div className="flex-1">
                   <h3 className="text-lg font-semibold text-gray-900">
                     Analisi AI
                   </h3>
                   <div className="flex items-center gap-3 text-sm text-gray-500">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                      result.analysis.status === 'completed' 
-                        ? 'bg-green-100 text-green-800' 
-                        : result.analysis.status === 'failed'
-                        ? 'bg-red-100 text-red-800'
-                        : 'bg-yellow-100 text-yellow-800'
-                    }`}>
-                      {result.analysis.status === 'completed' ? 'Completato' : result.analysis.status === 'failed' ? 'Fallito' : 'In corso'}
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      Completato
                     </span>
-                    {result.analysis.duration_seconds && (
-                      <span>Durata: {result.analysis.duration_seconds.toFixed(2)}s</span>
+                    {result.analysis.model && (
+                      <span>Modello: {result.analysis.model}</span>
+                    )}
+                    {result.analysis.usage && (
+                      <span>Token: {result.analysis.usage.input_tokens + result.analysis.usage.output_tokens}</span>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* Error Message */}
-              {result.analysis.error && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-                  <p className="text-red-700 text-sm font-medium">Errore:</p>
-                  <p className="text-red-600 text-sm mt-1">{result.analysis.error}</p>
-                </div>
-              )}
-
               {/* Result Content */}
               {result.analysis.result && (
-                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 mb-4">
-                  <p className="text-gray-500 text-xs uppercase font-medium mb-2">Risultato</p>
-                  <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap">
+                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                  <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap leading-relaxed">
                     {result.analysis.result}
                   </div>
-                </div>
-              )}
-
-              {/* Messages from Agent */}
-              {result.analysis.messages && result.analysis.messages.length > 0 && (
-                <div className="space-y-3">
-                  <p className="text-gray-500 text-xs uppercase font-medium">Messaggi</p>
-                  {result.analysis.messages.map((msg, idx) => (
-                    <div 
-                      key={idx} 
-                      className={`p-3 rounded-lg ${
-                        msg.role === 'assistant' 
-                          ? 'bg-blue-50 border border-blue-200' 
-                          : 'bg-gray-50 border border-gray-200'
-                      }`}
-                    >
-                      <p className="text-xs text-gray-500 mb-1 capitalize">{msg.role}</p>
-                      <p className="text-gray-700 text-sm whitespace-pre-wrap">{msg.content}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Raw JSON fallback */}
-              {!result.analysis.result && !result.analysis.error && result.analysis.messages?.length === 0 && (
-                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                  <pre className="whitespace-pre-wrap text-gray-700 text-sm leading-relaxed font-mono text-xs">
-                    {JSON.stringify(result.analysis, null, 2)}
-                  </pre>
                 </div>
               )}
             </div>

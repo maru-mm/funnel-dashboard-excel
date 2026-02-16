@@ -9,12 +9,12 @@ import {
   CreditCard,
   ChevronRight,
   Sparkles,
-  Copy,
   FileCode,
   Zap,
-  Bot,
   ScanSearch,
   GitBranch,
+  Globe,
+  MessageSquare,
 } from 'lucide-react';
 
 const menuItems = [
@@ -22,16 +22,6 @@ const menuItems = [
     name: 'Dashboard',
     href: '/',
     icon: LayoutDashboard,
-  },
-  {
-    name: 'Coding Agent AI',
-    href: '/coding-agent',
-    icon: Bot,
-  },
-  {
-    name: 'Clone & Swipe',
-    href: '/clone-landing',
-    icon: Copy,
   },
   {
     name: 'Copy Analyzer',
@@ -47,6 +37,16 @@ const menuItems = [
     name: 'Funnel Analyzer',
     href: '/funnel-analyzer',
     icon: ScanSearch,
+  },
+  {
+    name: 'Browser Agentico',
+    href: '/browser-agentico',
+    icon: Globe,
+  },
+  {
+    name: 'Affiliate Browser Chat',
+    href: '/affiliate-browser-chat',
+    icon: MessageSquare,
   },
   {
     name: 'My Funnels',
@@ -117,7 +117,15 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="p-3 border-t border-gray-800">
+      <div className="p-3 border-t border-gray-800 space-y-2">
+        <a
+          href="/api/health"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block text-xs text-gray-400 hover:text-amber-400 transition-colors"
+        >
+          Diagnostica API
+        </a>
         <div className="bg-gray-800 rounded-lg p-3">
           <p className="text-xs text-gray-400">Swipe Status</p>
           <div className="flex items-center gap-1.5 mt-1.5">

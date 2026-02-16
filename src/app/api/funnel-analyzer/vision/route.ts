@@ -6,7 +6,8 @@ const VISION_PROMPT = `Analizza questa pagina di funnel (screenshot). Restituisc
 - headline: stringa o null
 - subheadline: stringa o null
 - body_copy: testo principale (estratto) o null
-- cta_text: array di testi dei bottoni/CTA
+- cta_text: array di testi dei bottoni/CTA (tutti i CTA visibili)
+- next_step_ctas: array delle principali CTA che portano allo step successivo del funnel (es. "Acquista Ora", "Vai al checkout", "Continua", "Iscriviti") — escludi link secondari come privacy, cookie, torna indietro
 - offer_details: descrizione offerta o null
 - price_points: array di prezzi/testi prezzo rilevati
 - urgency_elements: array (es. "scadenza", "posti limitati", countdown)
@@ -52,6 +53,7 @@ function normalizeAnalysis(
     subheadline: str(raw.subheadline),
     body_copy: str(raw.body_copy),
     cta_text: arr(raw.cta_text),
+    next_step_ctas: arr(raw.next_step_ctas),
     offer_details: str(raw.offer_details),
     price_points: arr(raw.price_points),
     urgency_elements: arr(raw.urgency_elements),
@@ -200,6 +202,7 @@ export async function POST(request: NextRequest) {
           subheadline: null,
           body_copy: null,
           cta_text: [],
+          next_step_ctas: [],
           offer_details: null,
           price_points: [],
           urgency_elements: [],
@@ -224,11 +227,11 @@ export async function POST(request: NextRequest) {
         if (parsed) {
           analyses.push(normalizeAnalysis(step, parsed));
         } else {
-          analyses.push({
-            ...normalizeAnalysis(step, {}),
-            raw: rawText.slice(0, 500),
-            error: 'Could not parse JSON from model',
-          });
+        analyses.push({
+          ...normalizeAnalysis(step, { next_step_ctas: [] }),
+          raw: rawText.slice(0, 500),
+          error: 'Could not parse JSON from model',
+        });
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -241,6 +244,7 @@ export async function POST(request: NextRequest) {
           subheadline: null,
           body_copy: null,
           cta_text: [],
+          next_step_ctas: [],
           offer_details: null,
           price_points: [],
           urgency_elements: [],

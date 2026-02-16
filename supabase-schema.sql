@@ -75,8 +75,10 @@ CREATE TABLE IF NOT EXISTS funnel_pages (
   template_id UUID REFERENCES swipe_templates(id) ON DELETE SET NULL,
   product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   url_to_swipe TEXT NOT NULL DEFAULT '',
+  prompt TEXT,
   swipe_status swipe_status NOT NULL DEFAULT 'pending',
   swipe_result TEXT,
+  feedback TEXT DEFAULT '',
   cloned_data JSONB,
   swiped_data JSONB,
   analysis_status swipe_status,
@@ -135,6 +137,7 @@ CREATE TABLE IF NOT EXISTS funnel_crawl_steps (
   title TEXT NOT NULL DEFAULT '',
   step_data JSONB NOT NULL DEFAULT '{}',
   screenshot_base64 TEXT,
+  vision_analysis JSONB DEFAULT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
