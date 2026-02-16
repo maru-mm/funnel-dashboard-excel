@@ -13,7 +13,6 @@ import {
   Zap,
   ScanSearch,
   GitBranch,
-  Globe,
   MessageSquare,
 } from 'lucide-react';
 
@@ -37,11 +36,6 @@ const menuItems = [
     name: 'Funnel Analyzer',
     href: '/funnel-analyzer',
     icon: ScanSearch,
-  },
-  {
-    name: 'Browser Agentico',
-    href: '/browser-agentico',
-    icon: Globe,
   },
   {
     name: 'Affiliate Browser Chat',
