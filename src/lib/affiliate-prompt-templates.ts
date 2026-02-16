@@ -423,6 +423,65 @@ Consigli Tecnici per Browser Use:
     schedulable: false,
     tags: ['quiz', 'funnel', 'cro', 'ux', 'mapping', 'report'],
   },
+  {
+    id: 'sales-funnel-cro-mapping',
+    title: 'Sales Funnel CRO Mapping — Report Completo',
+    description: 'Naviga un intero sales funnel (no quiz) come esperto CRO/UX: mappa ogni pagina, estrai copy, elementi di persuasione e fornisci un report con analisi completa.',
+    category: 'funnel_analysis',
+    icon: 'Target',
+    prompt: `Ruolo: Agisci come un Esperto di Conversion Rate Optimization (CRO), Copywriting e Analista UX specializzato in funnel di vendita.
+
+Obiettivo: Naviga l'intero sales funnel (NON è un quiz) partendo dalla URL: [INSERISCI LINK QUI]. Il tuo compito è mappare ogni singola pagina del percorso di vendita, estrarre tutti i dati di copy, design e persuasione e fornirmi un report finale strutturato.
+
+Istruzioni di Navigazione:
+- Accedi alla prima pagina del funnel (landing page, advertorial, bridge page o VSL).
+- Scorri TUTTA la pagina dall'alto in basso prima di passare alla successiva.
+- Clicca sui CTA principali per avanzare nel funnel (pulsanti di acquisto, "Learn More", "Get Started", etc.).
+- Naviga attraverso tutte le pagine: landing → sales page → checkout → upsell → downsell → thank you.
+- Se il funnel richiede un'email, usa test@example.com. Se chiede dati di pagamento, NON inserire dati reali — fermati alla pagina di checkout e documentala.
+- Continua fino alla fine del funnel o fino a quando non puoi più procedere senza pagare.
+
+Formato del Report — Per OGNI pagina del funnel:
+1. Numero Step (es. Step 1 di 5)
+2. URL della pagina (link esatto)
+3. Tipo di Pagina: landing_page | advertorial | bridge_page | vsl | sales_page | checkout | upsell | downsell | order_bump | thank_you | other
+4. Headline principale (testo esatto, parola per parola)
+5. Sub-headline (testo esatto)
+6. Above the Fold: descrivi tutto ciò che è visibile senza scrollare
+7. Struttura della pagina: elenca TUTTE le sezioni dall'alto in basso (hero, benefits, testimonials, pricing, FAQ, etc.)
+8. Copy dei CTA: testo esatto di ogni pulsante presente (es. "Buy Now — 50% Off", "Add To Cart", "Yes, I Want This!")
+9. Prezzo e Offerta: prezzo pieno, prezzo scontato, bundle, subscription, one-time
+10. Elementi di Urgenza/Scarsità: timer, stock limitato, offerta a tempo, "only X left"
+11. Social Proof: testimonial (quanti e tipo), reviews, numeri ("100,000+ customers"), badge, loghi media
+12. Trust Elements: garanzia money-back, certificazioni, sicurezza pagamento, FDA disclaimer
+13. Elementi Visivi: video (VSL? durata?), immagini prodotto, before/after, infografiche
+14. Lead Capture: dove e come viene chiesta l'email (popup, inline, exit intent)
+
+ANALISI DEL FUNNEL COMPLETO:
+1. Architettura del Funnel: quante pagine totali, sequenza esatta del percorso
+2. Modello di Funnel: identifica il tipo (VSL funnel, advertorial → checkout, bridge page → sales, tripwire → upsell chain, etc.)
+3. Strategia di Pricing: come viene presentato il prezzo, anchoring, sconti, bundle strategy
+4. Upsell/Downsell Chain: quanti upsell, a che prezzo, come sono posizionati
+5. Copy Framework: quale framework usa il copy principale (AIDA, PAS, BAB, 4P, Star-Story-Solution)
+6. Tecniche di Persuasione: elenca ogni tecnica identificata (Anchoring, Social Proof, Authority, Scarcity, Urgency, Loss Aversion, Reciprocity, Commitment & Consistency, Contrast Principle, etc.)
+7. Hook Analysis: qual è l'hook principale? Quale big idea/mechanism viene comunicata?
+8. Target Audience: a chi si rivolge il funnel? Quali pain point e desideri vengono toccati?
+9. Punti di Forza: cosa fa bene questo funnel, elementi da replicare
+10. Punti di Debolezza: friction points, elementi mancanti, dove potrebbe migliorare
+
+Consigli Tecnici per Browser Use:
+- Scorri TUTTA la pagina lentamente: molti funnel sono long-form con 10+ sezioni.
+- Popup e Exit Intent: se appare un popup, documentalo (testo, offerta, CTA).
+- Video Sales Letter: se c'è un video, annota la sua presenza, posizione e se il pulsante di acquisto appare solo dopo un certo tempo.
+- Pagine dinamiche: alcune sales page cambiano contenuto dopo X secondi o dopo scroll. Attendi e documenta.
+- Screenshot: scatta uno screenshot per ogni pagina per documentare il layout e il design.
+
+Formatta tutto in modo strutturato e leggibile. Concludi con un summary finale di 5 righe sulla qualità complessiva del funnel e le 3 tattiche principali da replicare.`,
+    startUrl: '',
+    maxTurns: 200,
+    schedulable: false,
+    tags: ['sales', 'funnel', 'cro', 'ux', 'mapping', 'report', 'no-quiz'],
+  },
 
   // ===== CONTENT RESEARCH =====
   {

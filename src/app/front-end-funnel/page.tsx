@@ -42,20 +42,80 @@ import {
   Globe,
 } from 'lucide-react';
 
-// Helper: inject <base href> into cloned HTML so relative URLs resolve correctly in iframe preview
-function injectBaseHref(html: string, originalUrl: string): string {
+// Helper: sanitize cloned HTML and rewrite ALL relative URLs to absolute using the original domain
+// Strips scripts, rewrites src/href/url() so CSS, images, fonts load correctly in preview
+function sanitizeClonedHtml(html: string, originalUrl: string): string {
   try {
     const base = new URL(originalUrl);
-    const baseHref = `${base.origin}/`;
-    const baseTag = `<base href="${baseHref}" target="_blank">`;
-    if (html.includes('<head>')) {
-      return html.replace('<head>', `<head>${baseTag}`);
-    } else if (/<head\s/.test(html)) {
-      return html.replace(/<head([^>]*)>/, `<head$1>${baseTag}`);
-    } else if (html.includes('<html')) {
-      return html.replace(/<html([^>]*)>/, `<html$1><head>${baseTag}</head>`);
+    const origin = base.origin; // https://example.com
+    const pathDir = base.pathname.substring(0, base.pathname.lastIndexOf('/') + 1) || '/';
+    const baseDir = `${origin}${pathDir}`; // https://example.com/path/
+
+    // Resolve a relative URL to absolute
+    const abs = (relative: string): string => {
+      try {
+        if (!relative || relative.startsWith('data:') || relative.startsWith('blob:') || relative.startsWith('#') || relative.startsWith('mailto:') || relative.startsWith('tel:')) return relative;
+        if (relative.startsWith('http://') || relative.startsWith('https://')) return relative;
+        if (relative.startsWith('//')) return `${base.protocol}${relative}`;
+        if (relative.startsWith('/')) return `${origin}${relative}`;
+        return `${baseDir}${relative}`;
+      } catch { return relative; }
+    };
+
+    let clean = html;
+
+    // 1. Remove scripts & dangerous content
+    clean = clean.replace(/<base[^>]*>/gi, '');
+    clean = clean.replace(/<script[\s\S]*?<\/script>/gi, '');
+    clean = clean.replace(/<script[^>]*\/>/gi, '');
+    clean = clean.replace(/<\/?noscript[^>]*>/gi, '');
+    clean = clean.replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, '');
+    clean = clean.replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, '');
+    clean = clean.replace(/(href|src)\s*=\s*"javascript:[^"]*"/gi, '$1=""');
+    clean = clean.replace(/(href|src)\s*=\s*'javascript:[^']*'/gi, "$1=''");
+
+    // 2. Rewrite ALL relative URLs in HTML attributes to absolute
+    // Handles: src, href, action, poster, data-src, data-lazy-src, data-bg, srcset, content (meta)
+    const urlAttrs = ['src', 'href', 'action', 'poster', 'data-src', 'data-lazy-src', 'data-original', 'data-bg', 'data-image', 'content'];
+    for (const attr of urlAttrs) {
+      // Double-quoted attributes
+      const dblRegex = new RegExp(`(${attr}\\s*=\\s*")([^"]*)(")`, 'gi');
+      clean = clean.replace(dblRegex, (_m, pre, url, post) => {
+        if (attr === 'content' && !url.match(/\.(css|js|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|eot)/i)) return `${pre}${url}${post}`;
+        return `${pre}${abs(url)}${post}`;
+      });
+      // Single-quoted attributes
+      const sglRegex = new RegExp(`(${attr}\\s*=\\s*')([^']*)(')`, 'gi');
+      clean = clean.replace(sglRegex, (_m, pre, url, post) => {
+        if (attr === 'content' && !url.match(/\.(css|js|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|eot)/i)) return `${pre}${url}${post}`;
+        return `${pre}${abs(url)}${post}`;
+      });
     }
-    return baseTag + html;
+
+    // 3. Rewrite srcset (contains multiple URLs with sizes)
+    clean = clean.replace(/(srcset\s*=\s*")([^"]*?)(")/gi, (_m, pre, srcset, post) => {
+      const fixed = srcset.split(',').map((entry: string) => {
+        const parts = entry.trim().split(/\s+/);
+        if (parts[0]) parts[0] = abs(parts[0]);
+        return parts.join(' ');
+      }).join(', ');
+      return `${pre}${fixed}${post}`;
+    });
+
+    // 4. Rewrite url() in inline styles and <style> blocks
+    clean = clean.replace(/url\(\s*["']?(?!data:|https?:|blob:)(\/\/[^"')]+|[^"')]+)["']?\s*\)/gi, (_m, url) => {
+      return `url("${abs(url.trim())}")`;
+    });
+
+    // 5. Rewrite @import url() in <style> blocks
+    clean = clean.replace(/@import\s+["'](?!https?:|\/\/)([^"']+)["']/gi, (_m, url) => {
+      return `@import "${abs(url)}"`;
+    });
+    clean = clean.replace(/@import\s+url\(\s*["']?(?!https?:|\/\/)([^"')]+)["']?\s*\)/gi, (_m, url) => {
+      return `@import url("${abs(url)}")`;
+    });
+
+    return clean;
   } catch {
     return html;
   }
@@ -560,24 +620,33 @@ export default function FrontEndFunnel() {
 
     try {
       if (mode === 'identical') {
-        // Identical clone - single call, no API key needed
+        // Identical clone - fetched directly by Next.js API with CSS inlining
         const response = await fetch('/api/clone-funnel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, cloneMode: 'identical', userId: '00000000-0000-0000-0000-000000000001' }),
+          body: JSON.stringify({ url, cloneMode: 'identical' }),
         });
         const data = await response.json();
         if (!response.ok || data.error) throw new Error(data.error || 'Clone failed');
 
-        const clonedHtml = injectBaseHref(data.content, url);
+        // Warn if page is JS-rendered
+        if (data.warning) {
+          console.warn('⚠️ Clone warning:', data.warning);
+        }
+
+        const clonedHtml = sanitizeClonedHtml(data.content, url);
+        const statusMsg = data.jsRendered
+          ? `⚠️ Pagina JS-rendered (${(data.finalSize || 0).toLocaleString()} chars) - contenuto potrebbe essere incompleto`
+          : `Clone OK (${(data.finalSize || data.content?.length || 0).toLocaleString()} chars${data.cssInlined ? ', CSS inlined' : ''})`;
+
         updateFunnelPage(pageId, {
           swipeStatus: 'completed',
-          swipeResult: `Clone OK (${(data.content?.length || 0).toLocaleString()} chars)`,
+          swipeResult: statusMsg,
           clonedData: {
             html: clonedHtml,
             title: pageName,
             method_used: 'identical',
-            content_length: data.content?.length || 0,
+            content_length: data.finalSize || data.content?.length || 0,
             duration_seconds: 0,
             cloned_at: new Date(),
           },
@@ -585,10 +654,10 @@ export default function FrontEndFunnel() {
 
         setHtmlPreviewModal({
           isOpen: true,
-          title: `Clone: ${pageName}`,
+          title: data.jsRendered ? `⚠️ Clone (JS-rendered): ${pageName}` : `Clone: ${pageName}`,
           html: clonedHtml,
           iframeSrc: '',
-          metadata: { method: 'identical', length: data.content?.length || 0, duration: 0 },
+          metadata: { method: 'identical', length: data.finalSize || data.content?.length || 0, duration: 0 },
         });
 
       } else if (mode === 'rewrite') {
@@ -647,7 +716,7 @@ export default function FrontEndFunnel() {
             const textsProcessed = processData.textsProcessed || totalTexts;
             setCloneProgress(null);
 
-            const rewrittenHtml = injectBaseHref(processData.content, url);
+            const rewrittenHtml = sanitizeClonedHtml(processData.content, url);
             updateFunnelPage(pageId, {
               swipeStatus: 'completed',
               swipeResult: `Rewrite OK (${replacements}/${textsProcessed} texts)`,
@@ -714,7 +783,7 @@ export default function FrontEndFunnel() {
         if (!response.ok || data.error) throw new Error(data.error || 'Translate failed');
 
         setCloneProgress(null);
-        const translatedHtml = injectBaseHref(data.content, url);
+        const translatedHtml = sanitizeClonedHtml(data.content, url);
         updateFunnelPage(pageId, {
           swipeStatus: 'completed',
           swipeResult: `Translated (${data.textsTranslated || 0} texts → ${data.targetLanguage})`,
@@ -1949,13 +2018,24 @@ export default function FrontEndFunnel() {
                 )}
               </div>
               
-              {/* Preview iframe */}
+              {/* Preview iframe - scripts already stripped by sanitizeClonedHtml, doc.write for full CSS loading */}
               <div className="flex-1 overflow-hidden bg-gray-100 p-2">
                 <iframe
-                  src={htmlPreviewModal.iframeSrc || undefined}
-                  srcDoc={htmlPreviewModal.html || undefined}
+                  key={htmlPreviewModal.html?.length || htmlPreviewModal.iframeSrc || 'empty'}
+                  ref={(iframe) => {
+                    if (!iframe) return;
+                    if (htmlPreviewModal.iframeSrc) {
+                      iframe.src = htmlPreviewModal.iframeSrc;
+                    } else if (htmlPreviewModal.html) {
+                      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+                      if (doc) {
+                        doc.open();
+                        doc.write(htmlPreviewModal.html);
+                        doc.close();
+                      }
+                    }
+                  }}
                   className="w-full h-full bg-white rounded border border-gray-300"
-                  sandbox="allow-same-origin allow-scripts"
                   title="HTML Preview"
                 />
               </div>
@@ -1966,9 +2046,12 @@ export default function FrontEndFunnel() {
               {htmlPreviewModal.html && (
                 <button
                   onClick={() => {
-                    const blob = new Blob([htmlPreviewModal.html], { type: 'text/html' });
-                    const blobUrl = URL.createObjectURL(blob);
-                    window.open(blobUrl, '_blank');
+                    const newWin = window.open('', '_blank');
+                    if (newWin) {
+                      newWin.document.open();
+                      newWin.document.write(htmlPreviewModal.html);
+                      newWin.document.close();
+                    }
                   }}
                   className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-2"
                 >

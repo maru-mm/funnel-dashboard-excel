@@ -85,7 +85,8 @@ serve(async (req) => {
       customPrompt,
       userId,
       htmlContent,
-      targetLanguage
+      targetLanguage,
+      renderedHtml // Pre-rendered HTML from Playwright (sent by Next.js API for JS-rendered pages)
     } = await req.json()
 
     console.log(`📋 Richiesta ricevuta: phase=${phase}, cloneMode=${cloneMode}, url=${url?.substring(0, 50)}...`)
@@ -785,32 +786,40 @@ RESTITUISCI SOLO JSON ARRAY (stesso ordine):
         )
       }
 
-      console.log('📥 STEP 1: Fetching original HTML from:', url)
-      
+      // STEP 1: Get HTML - use pre-rendered HTML from Playwright if available, otherwise fetch
       let originalHTML = ''
-      try {
-        const htmlResponse = await fetch(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          }
-        })
-
-        if (!htmlResponse.ok) {
-          throw new Error(`Failed to fetch HTML: ${htmlResponse.status} ${htmlResponse.statusText}`)
-        }
-
-        originalHTML = await htmlResponse.text()
-        originalHTML = originalHTML
+      if (renderedHtml && typeof renderedHtml === 'string' && renderedHtml.length > 100) {
+        // Pre-rendered by Playwright (handles JS-rendered pages)
+        console.log(`📥 STEP 1: Using pre-rendered HTML from Playwright (${renderedHtml.length} chars)`)
+        originalHTML = renderedHtml
           .replace(/"\s*==\s*\$\d+/g, '"')
           .replace(/\s*==\s*\$\d+/g, '')
-        
-        console.log(`✅ HTML fetched and cleaned, size: ${originalHTML.length} characters`)
-      } catch (error) {
-        console.error('❌ Error fetching HTML:', error)
-        return new Response(
-          JSON.stringify({ error: `Errore scaricamento HTML: ${error.message}. Verifica che l'URL sia accessibile pubblicamente.` }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        )
+      } else {
+        console.log('📥 STEP 1: Fetching original HTML from:', url)
+        try {
+          const htmlResponse = await fetch(url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+          })
+
+          if (!htmlResponse.ok) {
+            throw new Error(`Failed to fetch HTML: ${htmlResponse.status} ${htmlResponse.statusText}`)
+          }
+
+          originalHTML = await htmlResponse.text()
+          originalHTML = originalHTML
+            .replace(/"\s*==\s*\$\d+/g, '"')
+            .replace(/\s*==\s*\$\d+/g, '')
+          
+          console.log(`✅ HTML fetched and cleaned, size: ${originalHTML.length} characters`)
+        } catch (error) {
+          console.error('❌ Error fetching HTML:', error)
+          return new Response(
+            JSON.stringify({ error: `Errore scaricamento HTML: ${error.message}. Verifica che l'URL sia accessibile pubblicamente.` }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          )
+        }
       }
 
       // NOTE: The full extractTextsFromHTML function is very long.
