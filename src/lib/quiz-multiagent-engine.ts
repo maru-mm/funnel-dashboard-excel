@@ -469,14 +469,16 @@ export async function cloneQuizHtml(url: string): Promise<{
 
       const docClone = document.documentElement.cloneNode(true) as HTMLElement;
 
-      // Remove scripts but preserve their text content for quiz logic reference
+      // Remove ALL scripts — both inline and external
+      // Inline scripts won't work outside original context
+      // External scripts point to original domain and won't load
+      // Claude will write fresh JS from scratch based on the MasterSpec
       const scriptTexts: string[] = [];
       docClone.querySelectorAll('script').forEach(s => {
         if (s.textContent && s.textContent.length > 50 && !s.src) {
           scriptTexts.push(s.textContent);
         }
-        // Keep script tags with src (external), remove inline ones
-        if (!s.src) s.remove();
+        s.remove();
       });
 
       // Remove event handlers
@@ -524,14 +526,14 @@ export async function cloneQuizHtml(url: string): Promise<{
         if (after) head.insertBefore(styleEl, after); else head.appendChild(styleEl);
       }
 
-      // Re-inject inline scripts (needed for quiz functionality)
+      // Mark original inline scripts as non-functional reference
+      // Claude will remove these and write new JS from scratch
       const body = docClone.querySelector('body');
-      if (body) {
-        for (const scriptText of scriptTexts) {
-          const scriptEl = document.createElement('script');
-          scriptEl.textContent = scriptText;
-          body.appendChild(scriptEl);
-        }
+      if (body && scriptTexts.length > 0) {
+        const comment = document.createComment(
+          ' ORIGINAL SCRIPTS (non-functional after cloning — Claude must rewrite JS from scratch) '
+        );
+        body.appendChild(comment);
       }
 
       const finalHtml = '<!DOCTYPE html>\n' + docClone.outerHTML;

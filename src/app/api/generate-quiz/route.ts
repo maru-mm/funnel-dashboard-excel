@@ -3,7 +3,7 @@ import { getSingletonBrowser, type Browser } from '@/lib/get-browser';
 import { supabase } from '@/lib/supabase';
 import type { AffiliateSavedFunnel, Json } from '@/types/database';
 
-export const maxDuration = 300;
+export const maxDuration = 800;
 export const dynamic = 'force-dynamic';
 
 // ─── Reuse DesignSpec from design-analysis ───

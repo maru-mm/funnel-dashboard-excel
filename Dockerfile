@@ -18,6 +18,7 @@ ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV STANDALONE=true
 RUN npm run build
 # Installa Chromium per Playwright (usato da /api/funnel-analyzer/crawl)
 RUN npx playwright install --with-deps chromium

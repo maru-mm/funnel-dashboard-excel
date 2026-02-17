@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getSingletonBrowser, type Browser } from '@/lib/get-browser';
 
-export const maxDuration = 300;
+export const maxDuration = 800;
 export const dynamic = 'force-dynamic';
 import { supabase } from '@/lib/supabase';
 import type { DesignSpec } from '../design-analysis/route';

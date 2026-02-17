@@ -1,7 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: 'standalone',
+  // 'standalone' is only needed for Docker/Fly.io self-hosting.
+  // On Vercel, omit it so Fluid Compute and maxDuration work correctly.
+  ...(process.env.STANDALONE === 'true' ? { output: 'standalone' } : {}),
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
   experimental: {
