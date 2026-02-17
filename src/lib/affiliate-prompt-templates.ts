@@ -424,6 +424,47 @@ Consigli Tecnici per Browser Use:
     tags: ['quiz', 'funnel', 'cro', 'ux', 'mapping', 'report'],
   },
   {
+    id: 'quiz-funnel-cro-granular-navigation',
+    title: 'Quiz Funnel CRO — Navigazione Granulare Step-by-Step',
+    description: 'Navigazione sequenziale e granulare di un quiz funnel con protocollo rigido: ogni schermata è un nuovo step, screenshot obbligatorio, verifica URL e report strutturato con analisi CRO/UX finale.',
+    category: 'funnel_analysis',
+    icon: 'ClipboardList',
+    prompt: `Ruolo: Agisci come un Esperto di Conversion Rate Optimization (CRO) e Analista UX.
+Obiettivo: Esegui una navigazione sequenziale e granulare del quiz funnel all'indirizzo: [INSERISCI LINK QUI].
+
+PROTOCOLLO RIGIDO DI NAVIGAZIONE:
+
+1. Analisi Step-by-Step: Non raggruppare mai più domande in un unico punto del report. Ogni volta che clicchi su una risposta e la schermata cambia (anche se l'URL rimane lo stesso o cambia solo un parametro), devi considerarlo un "Nuovo Step".
+2. Interazione: Rispondi alle domande selezionando sempre la prima opzione disponibile. Se viene richiesta l'email, usa test@example.com.
+3. Verifica URL: Per ogni singolo step, leggi e trascrivi l'URL completo presente nella barra degli indirizzi.
+4. Screenshot Obbligatorio: Scatta uno screenshot per ogni singola domanda/schermata prima di procedere alla successiva.
+
+FORMATO REPORT RICHIESTO (DA RIPETERE PER OGNI SCHERMATA):
+
+---
+
+### STEP [Numero Progressivo]
+
+* URL ESATTO: [Copia qui l'URL completo della barra degli indirizzi]
+* DOMANDA/TITOLO: [Testo principale visibile]
+* TIPO DI INPUT: [Scelta singola / Scelta multipla / Input testo / Slider]
+* OPZIONI DISPONIBILI: [Elenco completo delle opzioni di risposta cliccabili]
+* ELEMENTI VISIVI: [Presenza di icone, immagini del prodotto, progress bar (indica la % se visibile), timer o testimonianze]
+* AZIONE COMPIUTA: [Indica cosa hai cliccato per andare avanti]
+
+---
+
+ANALISI FINALE (solo dopo aver completato il quiz):
+
+* Mappa del Funnel: Riepilogo del numero totale di step.
+* Logica di Branching: Indica se il quiz sembra lineare o se cambia in base alle risposte.
+* UX Review: Commenta la velocità di caricamento, la chiarezza delle domande e l'efficacia della barra di progressione.`,
+    startUrl: '',
+    maxTurns: 200,
+    schedulable: false,
+    tags: ['quiz', 'funnel', 'cro', 'ux', 'granular', 'step-by-step', 'navigation', 'report'],
+  },
+  {
     id: 'sales-funnel-cro-mapping',
     title: 'Sales Funnel CRO Mapping — Report Completo',
     description: 'Naviga un intero sales funnel (no quiz) come esperto CRO/UX: mappa ogni pagina, estrai copy, elementi di persuasione e fornisci un report con analisi completa.',

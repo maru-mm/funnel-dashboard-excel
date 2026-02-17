@@ -31,6 +31,11 @@ import {
   Layers,
   RefreshCw,
   FileText,
+  Camera,
+  Package,
+  ArrowRight,
+  X,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface UsageInfo {
@@ -48,6 +53,61 @@ interface AffiliateFunnelStep {
   description?: string;
   cta_text?: string;
 }
+
+interface SwapPayload {
+  prompt: string;
+  screenshot?: string;
+  product?: {
+    name: string;
+    description: string;
+    price: number;
+    benefits: string[];
+    ctaText: string;
+    ctaUrl: string;
+    brandName: string;
+  };
+  funnelSteps?: AffiliateFunnelStep[];
+  funnelMeta?: {
+    funnel_name?: string;
+    brand_name?: string;
+    entry_url?: string;
+    funnel_type?: string;
+    category?: string;
+    total_steps?: number;
+    analysis_summary?: string;
+    persuasion_techniques?: string[];
+    notable_elements?: string[];
+    lead_capture_method?: string;
+  };
+  // Chunked mode fields
+  mode?: 'simple' | 'swap' | 'chunked';
+  designSpec?: unknown;
+  cssTokens?: unknown;
+  branding?: unknown;
+}
+
+type PipelinePhase =
+  | 'idle'
+  | 'fetching_screenshots'
+  | 'analyzing_design'
+  | 'generating_branding'
+  | 'generating_css'
+  | 'generating_js'
+  | 'generating_html'
+  | 'done'
+  | 'error';
+
+const PHASE_LABELS: Record<PipelinePhase, string> = {
+  idle: '',
+  fetching_screenshots: 'Recupero screenshot dal database...',
+  analyzing_design: 'Analisi design con Gemini Vision...',
+  generating_branding: 'Generazione branding con AI...',
+  generating_css: 'Generazione CSS Design System...',
+  generating_js: 'Generazione Quiz Engine JS...',
+  generating_html: 'Assemblaggio HTML finale...',
+  done: 'Completato!',
+  error: 'Errore',
+};
 
 const PRESET_QUIZZES = [
   {
@@ -104,13 +164,25 @@ export default function SwipeQuizPage() {
   const [error, setError] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [streamProgress, setStreamProgress] = useState(0);
+  const [generationPhase, setGenerationPhase] = useState('');
 
   // Existing funnels from store + Supabase
-  const { funnelPages, isInitialized } = useStore();
+  const { funnelPages, products, isInitialized } = useStore();
   const [affiliateFunnels, setAffiliateFunnels] = useState<AffiliateSavedFunnel[]>([]);
   const [affiliateLoading, setAffiliateLoading] = useState(false);
   const [showMyFunnels, setShowMyFunnels] = useState(true);
   const [expandedFunnelId, setExpandedFunnelId] = useState<string | null>(null);
+
+  // Swap mode state
+  const [selectedFunnel, setSelectedFunnel] = useState<AffiliateSavedFunnel | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<string>('');
+  const [screenshotBase64, setScreenshotBase64] = useState<string | null>(null);
+  const [screenshotLoading, setScreenshotLoading] = useState(false);
+  const [captureScreenshot, setCaptureScreenshot] = useState(true);
+
+  // Pipeline phase tracking for chunked mode
+  const [pipelinePhase, setPipelinePhase] = useState<PipelinePhase>('idle');
+  const [useChunkedMode, setUseChunkedMode] = useState(true);
 
   // Filter quiz-type funnel pages from the store
   const quizFunnelPages = useMemo(
@@ -120,22 +192,28 @@ export default function SwipeQuizPage() {
 
   // Filter affiliate funnels that are quiz-type
   const quizAffiliateFunnels = useMemo(
-    () => affiliateFunnels.filter((f) =>
-      f.funnel_type?.toLowerCase().includes('quiz') ||
-      f.category?.toLowerCase().includes('quiz') ||
-      (Array.isArray(f.steps) && (f.steps as unknown as AffiliateFunnelStep[]).some(
-        (s) => s.step_type === 'quiz_question' || s.step_type === 'info_screen'
-      ))
-    ),
+    () =>
+      affiliateFunnels.filter(
+        (f) =>
+          f.funnel_type?.toLowerCase().includes('quiz') ||
+          f.category?.toLowerCase().includes('quiz') ||
+          (Array.isArray(f.steps) &&
+            (f.steps as unknown as AffiliateFunnelStep[]).some(
+              (s) => s.step_type === 'quiz_question' || s.step_type === 'info_screen'
+            ))
+      ),
     [affiliateFunnels]
   );
 
   // All affiliate funnels (non-quiz) as fallback
   const otherAffiliateFunnels = useMemo(
-    () => affiliateFunnels.filter((f) =>
-      !quizAffiliateFunnels.some((q) => q.id === f.id)
-    ),
+    () => affiliateFunnels.filter((f) => !quizAffiliateFunnels.some((q) => q.id === f.id)),
     [affiliateFunnels, quizAffiliateFunnels]
+  );
+
+  const selectedProduct = useMemo(
+    () => products.find((p) => p.id === selectedProductId) || null,
+    [products, selectedProductId]
   );
 
   const loadAffiliateFunnels = useCallback(async () => {
@@ -154,73 +232,36 @@ export default function SwipeQuizPage() {
     loadAffiliateFunnels();
   }, [loadAffiliateFunnels]);
 
-  const buildPromptFromFunnel = (funnel: AffiliateSavedFunnel): string => {
-    const steps = Array.isArray(funnel.steps)
-      ? (funnel.steps as unknown as AffiliateFunnelStep[])
-      : [];
-    const quizSteps = steps.filter(
-      (s) => s.step_type === 'quiz_question' || s.step_type === 'info_screen'
-    );
+  // Auto-select first product
+  useEffect(() => {
+    if (products.length > 0 && !selectedProductId) {
+      setSelectedProductId(products[0].id);
+    }
+  }, [products, selectedProductId]);
 
-    const stepsDescription = (quizSteps.length > 0 ? quizSteps : steps)
-      .slice(0, 10)
-      .map((s) => {
-        let desc = `Step ${s.step_index}: "${s.title || 'Senza titolo'}"`;
-        if (s.step_type) desc += ` (tipo: ${s.step_type})`;
-        if (s.options && s.options.length > 0)
-          desc += ` — Opzioni: ${s.options.join(', ')}`;
-        if (s.description) desc += ` — ${s.description}`;
-        return desc;
-      })
-      .join('\n');
-
-    const techniques = funnel.persuasion_techniques?.length
-      ? `\nTecniche di persuasione: ${funnel.persuasion_techniques.join(', ')}`
-      : '';
-    const elements = funnel.notable_elements?.length
-      ? `\nElementi notevoli: ${funnel.notable_elements.join(', ')}`
-      : '';
-    const analysis = funnel.analysis_summary
-      ? `\nAnalisi: ${funnel.analysis_summary}`
-      : '';
-
-    return `Crea un quiz interattivo ispirato al funnel "${funnel.funnel_name}" (${funnel.brand_name || 'brand generico'}).
-Tipo funnel: ${funnel.funnel_type || 'quiz'}
-Categoria: ${funnel.category || 'generale'}
-URL originale: ${funnel.entry_url}
-Numero step originali: ${funnel.total_steps}
-${techniques}${elements}${analysis}
-
-STRUTTURA DEGLI STEP DEL QUIZ ORIGINALE:
-${stepsDescription || 'Nessuno step disponibile'}
-
-Genera un quiz HTML/CSS/JS con lo stesso stile e struttura ma con design moderno, colori accattivanti, progress bar animata e pagina risultati finale.`;
-  };
-
-  const buildPromptFromFunnelPage = (page: {
-    name: string;
-    urlToSwipe: string;
-    prompt?: string;
-    extractedData?: {
-      headline: string;
-      subheadline: string;
-      cta: string[];
-      benefits: string[];
-    };
-  }): string => {
-    const extracted = page.extractedData;
-    const details = extracted
-      ? `\nHeadline originale: "${extracted.headline}"
-Subheadline: "${extracted.subheadline}"
-CTA: ${extracted.cta?.join(', ') || 'N/A'}
-Benefici: ${extracted.benefits?.join(', ') || 'N/A'}`
-      : '';
-
-    return `Crea un quiz interattivo ispirato alla pagina "${page.name}".
-URL originale: ${page.urlToSwipe}
-${page.prompt ? `Note: ${page.prompt}` : ''}${details}
-
-Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagina risultati. Il quiz deve catturare l'utente e portarlo a una raccomandazione prodotto.`;
+  const captureQuizScreenshot = async (url: string) => {
+    setScreenshotLoading(true);
+    setScreenshotBase64(null);
+    try {
+      const response = await fetch('/api/swipe-quiz/screenshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const data = await response.json();
+      if (data.success && data.screenshot) {
+        setScreenshotBase64(data.screenshot);
+        return data.screenshot as string;
+      } else {
+        console.error('Screenshot failed:', data.error);
+        return null;
+      }
+    } catch (err) {
+      console.error('Screenshot error:', err);
+      return null;
+    } finally {
+      setScreenshotLoading(false);
+    }
   };
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -239,9 +280,8 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
     }
   }, [generatedCode]);
 
-  const generateQuiz = async (customPrompt?: string) => {
-    const finalPrompt = customPrompt || prompt;
-    if (!finalPrompt.trim() || isGenerating) return;
+  const generateQuiz = async (payload: SwapPayload) => {
+    if (!payload.prompt.trim() || isGenerating) return;
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -255,14 +295,17 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
     setError(null);
     setStreamProgress(0);
     setActiveTab('preview');
+    setGenerationPhase('Invio a Claude...');
 
     let accumulated = '';
+    // For chunked mode: track CSS and JS chunks separately for progress
+    let currentChunk: 'css' | 'js' | 'html' | null = null;
 
     try {
       const response = await fetch('/api/swipe-quiz/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: finalPrompt }),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
 
@@ -270,6 +313,8 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
         const errData = await response.json();
         throw new Error(errData.error || `Errore HTTP ${response.status}`);
       }
+
+      setGenerationPhase('Generazione codice quiz...');
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error('Impossibile leggere lo stream');
@@ -294,14 +339,53 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
 
             if (data.error) {
               setError(data.error);
+              setPipelinePhase('error');
               break;
             }
 
             if (data.done) {
               setUsage(data.usage || null);
+              setGenerationPhase('');
+              setPipelinePhase('done');
               break;
             }
 
+            // Chunked mode: phase events
+            if (data.phase) {
+              if (data.phase === 'css') {
+                currentChunk = 'css';
+                setPipelinePhase('generating_css');
+                setGenerationPhase(data.phaseLabel || PHASE_LABELS.generating_css);
+                setStreamProgress(30);
+              } else if (data.phase === 'css_done') {
+                setStreamProgress(45);
+              } else if (data.phase === 'js') {
+                currentChunk = 'js';
+                setPipelinePhase('generating_js');
+                setGenerationPhase(data.phaseLabel || PHASE_LABELS.generating_js);
+                setStreamProgress(45);
+              } else if (data.phase === 'js_done') {
+                setStreamProgress(65);
+              } else if (data.phase === 'html') {
+                currentChunk = 'html';
+                setPipelinePhase('generating_html');
+                setGenerationPhase(data.phaseLabel || PHASE_LABELS.generating_html);
+                setStreamProgress(65);
+              }
+              continue;
+            }
+
+            // Chunked mode: chunk text (CSS/JS not shown as main code, only HTML)
+            if (data.chunk && data.text) {
+              // CSS and JS chunks are intermediate — don't show in preview
+              // but can track progress
+              if (data.chunk === 'css' || data.chunk === 'js') {
+                setStreamProgress((prev) => Math.min(prev + 0.3, currentChunk === 'css' ? 44 : 64));
+              }
+              continue;
+            }
+
+            // Main text output (legacy mode or HTML chunk in chunked mode)
             if (data.text) {
               accumulated += data.text;
               setGeneratedCode(accumulated);
@@ -329,19 +413,247 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
       if (err instanceof Error && err.name === 'AbortError') {
         return;
       }
-      setError(
-        err instanceof Error ? err.message : 'Errore durante la generazione'
-      );
+      setError(err instanceof Error ? err.message : 'Errore durante la generazione');
+      setPipelinePhase('error');
     } finally {
       setIsGenerating(false);
+      setGenerationPhase('');
       abortControllerRef.current = null;
     }
+  };
+
+  // Simple generation (no swap)
+  const generateSimple = (customPrompt?: string) => {
+    const finalPrompt = customPrompt || prompt;
+    if (!finalPrompt.trim()) return;
+    generateQuiz({ prompt: finalPrompt });
+  };
+
+  // Full swap generation from a funnel
+  const generateSwap = async (funnel: AffiliateSavedFunnel) => {
+    const steps = Array.isArray(funnel.steps)
+      ? (funnel.steps as unknown as AffiliateFunnelStep[])
+      : [];
+
+    const product = selectedProduct
+      ? {
+          name: selectedProduct.name,
+          description: selectedProduct.description,
+          price: selectedProduct.price,
+          benefits: selectedProduct.benefits,
+          ctaText: selectedProduct.ctaText,
+          ctaUrl: selectedProduct.ctaUrl,
+          brandName: selectedProduct.brandName,
+        }
+      : undefined;
+
+    const funnelMeta = {
+      funnel_name: funnel.funnel_name,
+      brand_name: funnel.brand_name || undefined,
+      entry_url: funnel.entry_url,
+      funnel_type: funnel.funnel_type,
+      category: funnel.category,
+      total_steps: funnel.total_steps,
+      analysis_summary: funnel.analysis_summary || undefined,
+      persuasion_techniques: funnel.persuasion_techniques || [],
+      notable_elements: funnel.notable_elements || [],
+      lead_capture_method: funnel.lead_capture_method || undefined,
+    };
+
+    const swapPrompt = product
+      ? `Replica esattamente il quiz "${funnel.funnel_name}" ma swappa tutto il contenuto per il mio prodotto "${product.name}" di "${product.brandName}". Mantieni la stessa identica struttura, numero di step, tipologie di domande e logica risultati. Genera il branding (colori, tono, copy) adeguato al mio prodotto.`
+      : `Replica esattamente il quiz "${funnel.funnel_name}" con la stessa struttura, domande, opzioni e logica risultati. Crea un design moderno e professionale.`;
+
+    setPrompt(swapPrompt);
+
+    // ── CHUNKED PIPELINE: Design Spec + Branding + Chunked Generation ──
+    if (useChunkedMode && product) {
+      setIsGenerating(true);
+      setGeneratedCode('');
+      setUsage(null);
+      setError(null);
+      setStreamProgress(0);
+      setActiveTab('preview');
+      setPipelinePhase('fetching_screenshots');
+
+      try {
+        // Phase 1: Fetch per-step screenshots from DB
+        setGenerationPhase(PHASE_LABELS.fetching_screenshots);
+        setStreamProgress(5);
+
+        let screenshotsList: string[] = [];
+        let singleScreenshot: string | undefined;
+
+        try {
+          const ssRes = await fetch('/api/swipe-quiz/fetch-screenshots', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entryUrl: funnel.entry_url, funnelName: funnel.funnel_name }),
+          });
+          const ssData = await ssRes.json();
+          if (ssData.success && ssData.steps?.length > 0) {
+            screenshotsList = ssData.steps.map((s: { screenshotBase64: string }) => s.screenshotBase64);
+          }
+        } catch {
+          // Fallback: will capture single screenshot below
+        }
+
+        // Fallback: capture single screenshot if no DB screenshots
+        if (screenshotsList.length === 0 && captureScreenshot && funnel.entry_url) {
+          setGenerationPhase('Cattura screenshot del quiz originale...');
+          const result = await captureQuizScreenshot(funnel.entry_url);
+          if (result) {
+            singleScreenshot = result;
+            screenshotsList = [result];
+          }
+        }
+
+        setStreamProgress(10);
+
+        // Phase 2: Design Analysis with Gemini Vision
+        setPipelinePhase('analyzing_design');
+        setGenerationPhase(PHASE_LABELS.analyzing_design);
+
+        let designSpec = null;
+        let cssTokens = null;
+
+        if (screenshotsList.length > 0) {
+          try {
+            const designRes = await fetch('/api/swipe-quiz/design-analysis', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                screenshots: screenshotsList.slice(0, 3),
+              }),
+            });
+            const designData = await designRes.json();
+            if (designData.success && designData.designSpec) {
+              designSpec = designData.designSpec;
+            }
+          } catch (err) {
+            console.warn('Design analysis failed, continuing without:', err);
+          }
+        }
+
+        // Also get CSS tokens from live page if we have a screenshot endpoint
+        if (captureScreenshot && funnel.entry_url && !singleScreenshot) {
+          try {
+            const cssRes = await fetch('/api/swipe-quiz/screenshot', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: funnel.entry_url, extractCss: true }),
+            });
+            const cssData = await cssRes.json();
+            if (cssData.success) {
+              cssTokens = cssData.cssTokens || null;
+              if (!singleScreenshot && cssData.screenshot) {
+                singleScreenshot = cssData.screenshot;
+                setScreenshotBase64(cssData.screenshot);
+              }
+            }
+          } catch {
+            // CSS extraction is best-effort
+          }
+        }
+
+        setStreamProgress(18);
+
+        // Phase 3: Generate Branding
+        setPipelinePhase('generating_branding');
+        setGenerationPhase(PHASE_LABELS.generating_branding);
+
+        let brandingResult = null;
+        try {
+          const brandingRes = await fetch('/api/swipe-quiz/generate-branding', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              entryUrl: funnel.entry_url,
+              funnelName: funnel.funnel_name,
+              product,
+              funnelMeta: {
+                funnel_type: funnel.funnel_type,
+                category: funnel.category,
+                analysis_summary: funnel.analysis_summary,
+                persuasion_techniques: funnel.persuasion_techniques,
+                lead_capture_method: funnel.lead_capture_method,
+                notable_elements: funnel.notable_elements,
+              },
+              options: { provider: 'gemini', language: 'it' },
+            }),
+          });
+          const brandingData = await brandingRes.json();
+          if (brandingData.success && brandingData.branding) {
+            brandingResult = brandingData.branding;
+          }
+        } catch (err) {
+          console.warn('Branding generation failed:', err);
+        }
+
+        setStreamProgress(28);
+
+        // If branding was generated, use chunked mode
+        if (brandingResult) {
+          setPipelinePhase('generating_css');
+          setGenerationPhase(PHASE_LABELS.generating_css);
+
+          await generateQuiz({
+            prompt: swapPrompt,
+            screenshot: singleScreenshot,
+            product,
+            funnelSteps: steps,
+            funnelMeta,
+            mode: 'chunked',
+            designSpec,
+            cssTokens,
+            branding: brandingResult,
+          });
+        } else {
+          // Fallback to legacy swap mode if branding failed
+          console.warn('Branding generation failed — falling back to legacy swap mode');
+          setPipelinePhase('idle');
+          await generateQuiz({
+            prompt: swapPrompt,
+            screenshot: singleScreenshot,
+            product,
+            funnelSteps: steps,
+            funnelMeta,
+            designSpec,
+            cssTokens,
+          });
+        }
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        setError(err instanceof Error ? err.message : 'Errore durante il pipeline');
+        setPipelinePhase('error');
+        setIsGenerating(false);
+        setGenerationPhase('');
+      }
+      return;
+    }
+
+    // ── LEGACY SWAP MODE (no chunked) ──
+    let screenshot: string | undefined;
+    if (captureScreenshot && funnel.entry_url) {
+      setGenerationPhase('Cattura screenshot del quiz originale...');
+      const result = await captureQuizScreenshot(funnel.entry_url);
+      screenshot = result || undefined;
+    }
+
+    await generateQuiz({
+      prompt: swapPrompt,
+      screenshot,
+      product,
+      funnelSteps: steps,
+      funnelMeta,
+    });
   };
 
   const stopGeneration = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       setIsGenerating(false);
+      setGenerationPhase('');
     }
   };
 
@@ -368,6 +680,10 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
     setUsage(null);
     setError(null);
     setStreamProgress(0);
+    setSelectedFunnel(null);
+    setScreenshotBase64(null);
+    setGenerationPhase('');
+    setPipelinePhase('idle');
     if (iframeRef.current) {
       iframeRef.current.srcdoc = '';
     }
@@ -377,95 +693,317 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
     <div className="min-h-screen bg-gray-50">
       <Header
         title="Swipe Quiz"
-        subtitle="Genera quiz interattivi con AI — Preview live in tempo reale"
+        subtitle="Genera quiz interattivi con AI — Swappa quiz esistenti sul tuo prodotto"
       />
 
       <div className="p-6">
-        {/* Prompt + Presets Row */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Sparkles className="w-5 h-5 text-purple-500" />
-            <h2 className="font-semibold text-gray-900">
-              Descrivi il quiz che vuoi generare
-            </h2>
+        {/* Product Selector Bar */}
+        <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl p-4 mb-6 shadow-md">
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2 text-white">
+              <Package className="w-5 h-5" />
+              <span className="font-semibold text-sm">Il mio prodotto:</span>
+            </div>
+            <select
+              value={selectedProductId}
+              onChange={(e) => setSelectedProductId(e.target.value)}
+              className="flex-1 min-w-[250px] px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white text-sm outline-none focus:bg-white/20 transition-colors [&>option]:text-gray-900"
+            >
+              <option value="">-- Seleziona prodotto --</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} — {p.brandName} (€{p.price})
+                </option>
+              ))}
+            </select>
+            {selectedProduct && (
+              <div className="flex items-center gap-3 text-white/80 text-xs">
+                <span className="bg-white/15 px-2 py-1 rounded">{selectedProduct.brandName}</span>
+                <span className="bg-white/15 px-2 py-1 rounded">€{selectedProduct.price}</span>
+                <span className="bg-white/15 px-2 py-1 rounded">
+                  {selectedProduct.benefits.length} benefici
+                </span>
+              </div>
+            )}
+            <div className="flex items-center gap-3 ml-auto">
+              <label className="flex items-center gap-2 text-white/80 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useChunkedMode}
+                  onChange={(e) => setUseChunkedMode(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded"
+                />
+                <Zap className="w-3.5 h-3.5" />
+                Pipeline HQ
+              </label>
+              <label className="flex items-center gap-2 text-white/80 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={captureScreenshot}
+                  onChange={(e) => setCaptureScreenshot(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded"
+                />
+                <Camera className="w-3.5 h-3.5" />
+                Screenshot
+              </label>
+            </div>
           </div>
+          {selectedProduct && (
+            <div className="mt-3 text-white/60 text-xs line-clamp-2">
+              {selectedProduct.description}
+            </div>
+          )}
+        </div>
 
-          {/* Prompt Input */}
-          <div className="flex gap-3 mb-5">
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                  generateQuiz();
-                }
-              }}
-              placeholder='Es: "Quiz per trovare il prodotto beauty perfetto, 5 domande, design rosa e oro, con progress bar e risultati personalizzati"'
-              rows={3}
-              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none resize-none text-sm"
-              disabled={isGenerating}
-            />
-            <div className="flex flex-col gap-2">
-              {isGenerating ? (
-                <button
-                  onClick={stopGeneration}
-                  className="flex items-center gap-2 px-5 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
-                >
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Stop
-                </button>
-              ) : (
-                <button
-                  onClick={() => generateQuiz()}
-                  disabled={!prompt.trim()}
-                  className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all disabled:from-gray-300 disabled:to-gray-300 disabled:cursor-not-allowed text-sm font-medium shadow-sm"
-                >
-                  <Play className="w-4 h-4" />
-                  Genera
-                </button>
-              )}
+        {/* Swap Panel - shown when a funnel is selected */}
+        {selectedFunnel && (
+          <div className="bg-white rounded-xl shadow-sm border-2 border-indigo-200 p-5 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900 text-sm">Quiz Swap</h3>
+                  <p className="text-xs text-gray-500">
+                    Replica struttura + branding dal tuo prodotto
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={resetAll}
-                className="flex items-center gap-2 px-5 py-3 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors text-sm"
+                onClick={() => {
+                  setSelectedFunnel(null);
+                  setScreenshotBase64(null);
+                }}
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
               >
-                <RotateCcw className="w-4 h-4" />
-                Reset
+                <X className="w-4 h-4" />
               </button>
             </div>
-          </div>
 
-          {/* Preset Templates */}
-          <div>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">
-              Template rapidi
-            </p>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-              {PRESET_QUIZZES.map((preset) => {
-                const Icon = preset.icon;
-                return (
-                  <button
-                    key={preset.label}
-                    onClick={() => {
-                      setPrompt(preset.prompt);
-                      generateQuiz(preset.prompt);
-                    }}
-                    disabled={isGenerating}
-                    className="group flex flex-col items-center gap-2 p-3 rounded-lg border border-gray-200 hover:border-transparent hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <div
-                      className={`w-10 h-10 rounded-lg bg-gradient-to-br ${preset.color} flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform`}
-                    >
-                      <Icon className="w-5 h-5 text-white" />
-                    </div>
-                    <span className="text-xs font-medium text-gray-700 text-center leading-tight">
-                      {preset.label}
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-4 items-center">
+              {/* Source funnel */}
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <p className="text-[10px] uppercase font-medium text-gray-400 tracking-wider mb-2">
+                  Quiz originale
+                </p>
+                <p className="font-medium text-gray-800 text-sm mb-1">
+                  {selectedFunnel.funnel_name}
+                </p>
+                {selectedFunnel.brand_name && (
+                  <p className="text-xs text-gray-500 mb-1">{selectedFunnel.brand_name}</p>
+                )}
+                <p className="text-xs text-gray-400 truncate mb-2">{selectedFunnel.entry_url}</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded">
+                    {selectedFunnel.total_steps} step
+                  </span>
+                  <span className="text-[10px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">
+                    {selectedFunnel.funnel_type || 'quiz'}
+                  </span>
+                  {(() => {
+                    const steps = Array.isArray(selectedFunnel.steps)
+                      ? (selectedFunnel.steps as unknown as AffiliateFunnelStep[])
+                      : [];
+                    const questions = steps.filter(
+                      (s) => s.step_type === 'quiz_question'
+                    ).length;
+                    return questions > 0 ? (
+                      <span className="text-[10px] bg-cyan-50 text-cyan-600 px-1.5 py-0.5 rounded">
+                        {questions} domande
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
+
+                {/* Screenshot preview */}
+                {screenshotBase64 && (
+                  <div className="mt-3 relative">
+                    <img
+                      src={`data:image/png;base64,${screenshotBase64}`}
+                      alt="Screenshot quiz"
+                      className="w-full max-h-40 object-cover object-top rounded border border-gray-200"
+                    />
+                    <span className="absolute top-1 right-1 bg-green-500 text-white text-[9px] px-1.5 py-0.5 rounded font-medium">
+                      Screenshot OK
                     </span>
+                  </div>
+                )}
+                {screenshotLoading && (
+                  <div className="mt-3 flex items-center gap-2 text-xs text-gray-400">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Cattura screenshot...
+                  </div>
+                )}
+              </div>
+
+              {/* Arrow */}
+              <div className="hidden md:flex flex-col items-center gap-1">
+                <ArrowRight className="w-6 h-6 text-indigo-400" />
+                <span className="text-[10px] text-indigo-400 font-medium">SWAP</span>
+              </div>
+
+              {/* Target product */}
+              <div className="bg-indigo-50 rounded-lg p-4 border border-indigo-200">
+                <p className="text-[10px] uppercase font-medium text-indigo-400 tracking-wider mb-2">
+                  Il tuo prodotto
+                </p>
+                {selectedProduct ? (
+                  <>
+                    <p className="font-medium text-gray-800 text-sm mb-1">
+                      {selectedProduct.name}
+                    </p>
+                    <p className="text-xs text-gray-500 mb-1">{selectedProduct.brandName}</p>
+                    <p className="text-xs text-gray-400 line-clamp-2 mb-2">
+                      {selectedProduct.description}
+                    </p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium">
+                        €{selectedProduct.price}
+                      </span>
+                      <span className="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded">
+                        {selectedProduct.benefits.length} benefici
+                      </span>
+                      <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+                        CTA: {selectedProduct.ctaText}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-4">
+                    <Package className="w-6 h-6 mx-auto text-indigo-300 mb-1" />
+                    <p className="text-xs text-indigo-400">
+                      Seleziona un prodotto dalla barra sopra
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Prompt customization */}
+            <div className="mt-4">
+              <label className="block text-xs font-medium text-gray-500 mb-1">
+                Istruzioni aggiuntive (opzionale)
+              </label>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Es: Usa toni più caldi, aggiungi una sezione testimonianze prima del risultato, colori verde scuro..."
+                rows={2}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none text-sm"
+                disabled={isGenerating}
+              />
+            </div>
+
+            <button
+              onClick={() => generateSwap(selectedFunnel)}
+              disabled={isGenerating}
+              className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold shadow-md"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {generationPhase || 'Generazione...'}
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Genera Quiz Swappato
+                  {captureScreenshot && <Camera className="w-4 h-4 ml-1 opacity-60" />}
+                  {selectedProduct && <ImageIcon className="w-4 h-4 ml-1 opacity-60" />}
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Prompt + Presets Row (simple mode) */}
+        {!selectedFunnel && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Sparkles className="w-5 h-5 text-purple-500" />
+              <h2 className="font-semibold text-gray-900">
+                Genera un quiz da zero
+              </h2>
+            </div>
+
+            {/* Prompt Input */}
+            <div className="flex gap-3 mb-5">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    generateSimple();
+                  }
+                }}
+                placeholder='Es: "Quiz per trovare il prodotto beauty perfetto, 5 domande, design rosa e oro, con progress bar e risultati personalizzati"'
+                rows={3}
+                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none resize-none text-sm"
+                disabled={isGenerating}
+              />
+              <div className="flex flex-col gap-2">
+                {isGenerating ? (
+                  <button
+                    onClick={stopGeneration}
+                    className="flex items-center gap-2 px-5 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+                  >
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Stop
                   </button>
-                );
-              })}
+                ) : (
+                  <button
+                    onClick={() => generateSimple()}
+                    disabled={!prompt.trim()}
+                    className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all disabled:from-gray-300 disabled:to-gray-300 disabled:cursor-not-allowed text-sm font-medium shadow-sm"
+                  >
+                    <Play className="w-4 h-4" />
+                    Genera
+                  </button>
+                )}
+                <button
+                  onClick={resetAll}
+                  className="flex items-center gap-2 px-5 py-3 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors text-sm"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            {/* Preset Templates */}
+            <div>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">
+                Template rapidi
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+                {PRESET_QUIZZES.map((preset) => {
+                  const Icon = preset.icon;
+                  return (
+                    <button
+                      key={preset.label}
+                      onClick={() => {
+                        setPrompt(preset.prompt);
+                        generateSimple(preset.prompt);
+                      }}
+                      disabled={isGenerating}
+                      className="group flex flex-col items-center gap-2 p-3 rounded-lg border border-gray-200 hover:border-transparent hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <div
+                        className={`w-10 h-10 rounded-lg bg-gradient-to-br ${preset.color} flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform`}
+                      >
+                        <Icon className="w-5 h-5 text-white" />
+                      </div>
+                      <span className="text-xs font-medium text-gray-700 text-center leading-tight">
+                        {preset.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* My Quiz Funnels Section */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 mb-6 overflow-hidden">
@@ -479,6 +1017,11 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
               <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-medium">
                 {quizFunnelPages.length + quizAffiliateFunnels.length + otherAffiliateFunnels.length}
               </span>
+              {selectedFunnel && (
+                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                  Selezionato: {selectedFunnel.funnel_name}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               {affiliateLoading && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
@@ -514,9 +1057,13 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                       <button
                         key={page.id}
                         onClick={() => {
-                          const p = buildPromptFromFunnelPage(page);
-                          setPrompt(p);
-                          generateQuiz(p);
+                          generateSimple(
+                            `Crea un quiz interattivo ispirato alla pagina "${page.name}". URL: ${page.urlToSwipe}. ${page.prompt || ''} ${
+                              page.extractedData
+                                ? `Headline: "${page.extractedData.headline}". CTA: ${page.extractedData.cta?.join(', ')}. Benefici: ${page.extractedData.benefits?.join(', ')}`
+                                : ''
+                            }`
+                          );
                         }}
                         disabled={isGenerating}
                         className="group text-left p-4 rounded-lg border border-gray-200 hover:border-indigo-300 hover:shadow-md transition-all disabled:opacity-50"
@@ -529,15 +1076,17 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                         </div>
                         <p className="text-xs text-gray-400 truncate mb-1.5">{page.urlToSwipe}</p>
                         <div className="flex items-center gap-2">
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                            page.swipeStatus === 'completed'
-                              ? 'bg-green-100 text-green-700'
-                              : page.swipeStatus === 'in_progress'
-                                ? 'bg-yellow-100 text-yellow-700'
-                                : page.swipeStatus === 'failed'
-                                  ? 'bg-red-100 text-red-700'
-                                  : 'bg-gray-100 text-gray-500'
-                          }`}>
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                              page.swipeStatus === 'completed'
+                                ? 'bg-green-100 text-green-700'
+                                : page.swipeStatus === 'in_progress'
+                                  ? 'bg-yellow-100 text-yellow-700'
+                                  : page.swipeStatus === 'failed'
+                                    ? 'bg-red-100 text-red-700'
+                                    : 'bg-gray-100 text-gray-500'
+                            }`}
+                          >
                             {page.swipeStatus}
                           </span>
                           {page.extractedData && (
@@ -565,15 +1114,30 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                         ? (funnel.steps as unknown as AffiliateFunnelStep[])
                         : [];
                       const isExpanded = expandedFunnelId === funnel.id;
+                      const isSelected = selectedFunnel?.id === funnel.id;
 
                       return (
                         <div
                           key={funnel.id}
-                          className="border border-gray-200 rounded-lg overflow-hidden hover:border-indigo-200 transition-colors"
+                          className={`border rounded-lg overflow-hidden transition-colors ${
+                            isSelected
+                              ? 'border-indigo-400 bg-indigo-50/30 shadow-md'
+                              : 'border-gray-200 hover:border-indigo-200'
+                          }`}
                         >
                           <div className="flex items-center gap-3 p-3">
-                            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0">
-                              <HelpCircle className="w-4 h-4 text-white" />
+                            <div
+                              className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                                isSelected
+                                  ? 'bg-gradient-to-br from-green-500 to-emerald-600'
+                                  : 'bg-gradient-to-br from-indigo-500 to-purple-600'
+                              }`}
+                            >
+                              {isSelected ? (
+                                <Check className="w-4 h-4 text-white" />
+                              ) : (
+                                <HelpCircle className="w-4 h-4 text-white" />
+                              )}
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
@@ -587,7 +1151,9 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                                 )}
                               </div>
                               <div className="flex items-center gap-2 mt-0.5">
-                                <span className="text-xs text-gray-400 truncate">{funnel.entry_url}</span>
+                                <span className="text-xs text-gray-400 truncate">
+                                  {funnel.entry_url}
+                                </span>
                                 <span className="text-[10px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded shrink-0">
                                   {funnel.total_steps} step
                                 </span>
@@ -619,15 +1185,27 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                               </a>
                               <button
                                 onClick={() => {
-                                  const p = buildPromptFromFunnel(funnel);
-                                  setPrompt(p);
-                                  generateQuiz(p);
+                                  setSelectedFunnel(isSelected ? null : funnel);
+                                  setScreenshotBase64(null);
                                 }}
                                 disabled={isGenerating}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-xs font-medium rounded-md hover:from-indigo-600 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                                  isSelected
+                                    ? 'bg-green-600 text-white hover:bg-green-700'
+                                    : 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:from-indigo-600 hover:to-purple-700'
+                                }`}
                               >
-                                <Sparkles className="w-3.5 h-3.5" />
-                                Genera Quiz
+                                {isSelected ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5" />
+                                    Selezionato
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    Swappa Quiz
+                                  </>
+                                )}
                               </button>
                             </div>
                           </div>
@@ -636,7 +1214,7 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                           {isExpanded && steps.length > 0 && (
                             <div className="border-t border-gray-100 bg-gray-50 p-3">
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                {steps.slice(0, 12).map((step, idx) => (
+                                {steps.map((step, idx) => (
                                   <div
                                     key={idx}
                                     className="flex items-start gap-2 p-2 bg-white rounded-md border border-gray-100 text-xs"
@@ -657,7 +1235,9 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                                                 ? 'bg-amber-50 text-amber-600'
                                                 : step.step_type === 'info_screen'
                                                   ? 'bg-cyan-50 text-cyan-600'
-                                                  : 'bg-gray-100 text-gray-500'
+                                                  : step.step_type === 'result'
+                                                    ? 'bg-green-50 text-green-600'
+                                                    : 'bg-gray-100 text-gray-500'
                                           }`}
                                         >
                                           {step.step_type}
@@ -668,26 +1248,32 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                                           {step.options.join(' · ')}
                                         </p>
                                       )}
+                                      {step.description && (
+                                        <p className="text-gray-400 mt-0.5 line-clamp-1 italic">
+                                          {step.description}
+                                        </p>
+                                      )}
                                     </div>
                                   </div>
                                 ))}
                               </div>
-                              {steps.length > 12 && (
-                                <p className="text-xs text-gray-400 mt-2 text-center">
-                                  +{steps.length - 12} altri step
+                              {funnel.persuasion_techniques &&
+                                funnel.persuasion_techniques.length > 0 && (
+                                  <div className="mt-3 flex flex-wrap gap-1">
+                                    {funnel.persuasion_techniques.map((t, i) => (
+                                      <span
+                                        key={i}
+                                        className="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded"
+                                      >
+                                        {t}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              {funnel.analysis_summary && (
+                                <p className="mt-2 text-xs text-gray-500 bg-white p-2 rounded border border-gray-100">
+                                  {funnel.analysis_summary}
                                 </p>
-                              )}
-                              {funnel.persuasion_techniques && funnel.persuasion_techniques.length > 0 && (
-                                <div className="mt-3 flex flex-wrap gap-1">
-                                  {funnel.persuasion_techniques.map((t, i) => (
-                                    <span
-                                      key={i}
-                                      className="text-[10px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded"
-                                    >
-                                      {t}
-                                    </span>
-                                  ))}
-                                </div>
                               )}
                             </div>
                           )}
@@ -698,7 +1284,7 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                 </div>
               )}
 
-              {/* Other (non-quiz) Affiliate Funnels */}
+              {/* Other Affiliate Funnels */}
               {otherAffiliateFunnels.length > 0 && (
                 <div>
                   <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
@@ -710,12 +1296,15 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                       <button
                         key={funnel.id}
                         onClick={() => {
-                          const p = buildPromptFromFunnel(funnel);
-                          setPrompt(p);
-                          generateQuiz(p);
+                          setSelectedFunnel(funnel);
+                          setScreenshotBase64(null);
                         }}
                         disabled={isGenerating}
-                        className="group text-left p-3 rounded-lg border border-gray-200 hover:border-indigo-200 hover:shadow-sm transition-all disabled:opacity-50"
+                        className={`group text-left p-3 rounded-lg border transition-all disabled:opacity-50 ${
+                          selectedFunnel?.id === funnel.id
+                            ? 'border-indigo-400 bg-indigo-50'
+                            : 'border-gray-200 hover:border-indigo-200 hover:shadow-sm'
+                        }`}
                       >
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-sm font-medium text-gray-700 truncate group-hover:text-indigo-700 transition-colors">
@@ -755,7 +1344,8 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                     <Layers className="w-8 h-8 mx-auto mb-2 text-gray-300" />
                     <p className="text-sm">Nessun quiz funnel trovato</p>
                     <p className="text-xs mt-1">
-                      I tuoi funnel dalla sezione &quot;Front End Funnel&quot; e i funnel salvati appariranno qui
+                      I tuoi funnel dalla sezione &quot;Front End Funnel&quot; e i funnel salvati
+                      appariranno qui
                     </p>
                   </div>
                 )}
@@ -770,13 +1360,46 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
           )}
         </div>
 
-        {/* Progress Bar */}
+        {/* Pipeline Progress */}
         {isGenerating && (
           <div className="mb-4">
+            {/* Multi-phase indicator for chunked mode */}
+            {pipelinePhase !== 'idle' && (
+              <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
+                {(['fetching_screenshots', 'analyzing_design', 'generating_branding', 'generating_css', 'generating_js', 'generating_html'] as PipelinePhase[]).map((phase, idx) => {
+                  const isCurrent = pipelinePhase === phase;
+                  const isPast = (['fetching_screenshots', 'analyzing_design', 'generating_branding', 'generating_css', 'generating_js', 'generating_html'] as PipelinePhase[]).indexOf(pipelinePhase) > idx;
+                  const labels: Record<string, string> = {
+                    fetching_screenshots: 'Screenshots',
+                    analyzing_design: 'Design AI',
+                    generating_branding: 'Branding',
+                    generating_css: 'CSS',
+                    generating_js: 'JS Engine',
+                    generating_html: 'HTML',
+                  };
+                  return (
+                    <div key={phase} className="flex items-center gap-1.5">
+                      <div className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium transition-all whitespace-nowrap ${
+                        isCurrent
+                          ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-300'
+                          : isPast
+                            ? 'bg-green-50 text-green-600'
+                            : 'bg-gray-100 text-gray-400'
+                      }`}>
+                        {isPast && <Check className="w-3 h-3" />}
+                        {isCurrent && <Loader2 className="w-3 h-3 animate-spin" />}
+                        {labels[phase]}
+                      </div>
+                      {idx < 5 && <span className="text-gray-300 text-[10px]">&rarr;</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <div className="flex items-center gap-3 mb-1">
               <Zap className="w-4 h-4 text-purple-500 animate-pulse" />
               <span className="text-sm text-gray-600">
-                Generazione in corso...
+                {generationPhase || 'Generazione in corso...'}
               </span>
               <span className="text-xs text-gray-400 ml-auto">
                 {Math.round(streamProgress)}%
@@ -878,9 +1501,7 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
           </div>
 
           {/* Content Area */}
-          <div
-            className={`${isFullscreen ? 'h-[calc(100vh-49px)]' : 'h-[700px]'}`}
-          >
+          <div className={`${isFullscreen ? 'h-[calc(100vh-49px)]' : 'h-[700px]'}`}>
             {/* Preview Tab */}
             <div
               className={`w-full h-full ${activeTab === 'preview' ? 'block' : 'hidden'}`}
@@ -898,11 +1519,9 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                   <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-100 to-blue-100 flex items-center justify-center mb-4">
                     <Sparkles className="w-10 h-10 text-purple-400" />
                   </div>
-                  <p className="text-lg font-medium text-gray-500 mb-1">
-                    Nessun quiz generato
-                  </p>
+                  <p className="text-lg font-medium text-gray-500 mb-1">Nessun quiz generato</p>
                   <p className="text-sm">
-                    Scrivi un prompt o scegli un template per iniziare
+                    Scrivi un prompt, scegli un template, o seleziona un funnel da swappare
                   </p>
                 </div>
               )}
@@ -921,9 +1540,7 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
                 </pre>
               ) : (
                 <div className="flex items-center justify-center h-full text-gray-400">
-                  <p className="text-sm">
-                    Il codice apparirà qui durante la generazione
-                  </p>
+                  <p className="text-sm">Il codice apparirà qui durante la generazione</p>
                 </div>
               )}
             </div>
@@ -934,8 +1551,8 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
         {usage && (
           <div className="mt-4 flex items-center justify-between text-xs text-gray-400">
             <span>
-              Generato con Claude Sonnet 4 &middot;{' '}
-              {generatedCode.length.toLocaleString()} caratteri
+              Generato con Claude Sonnet 4{pipelinePhase === 'done' ? ' (Pipeline HQ)' : ''} &middot; {generatedCode.length.toLocaleString()}{' '}
+              caratteri
             </span>
             <span>
               {usage.input_tokens.toLocaleString()} token input &middot;{' '}
@@ -946,7 +1563,11 @@ Genera un quiz HTML/CSS/JS con 5-7 domande, design moderno, progress bar e pagin
 
         {/* Keyboard shortcut hint */}
         <p className="mt-3 text-xs text-gray-400 text-center">
-          Premi <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-200 rounded text-gray-500 font-mono">Cmd+Enter</kbd> per generare rapidamente
+          Premi{' '}
+          <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-200 rounded text-gray-500 font-mono">
+            Cmd+Enter
+          </kbd>{' '}
+          per generare rapidamente
         </p>
       </div>
     </div>
