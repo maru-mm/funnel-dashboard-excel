@@ -592,3 +592,309 @@ OUTPUT:
 Genera SOLO il file HTML completo trasformato, da <!DOCTYPE html> a </html>.
 Non aggiungere spiegazioni, commenti, o markdown. Solo codice HTML puro.
 Il quiz DEVE essere navigabile e funzionante.`;
+
+// =====================================================
+// V2 PIPELINE — Visual Replication (no HTML cloning)
+// =====================================================
+
+// ─── GEMINI: Visual Blueprint (combines visual design + UX flow) ───
+
+export const GEMINI_VISUAL_BLUEPRINT_PROMPT = `You are a SENIOR UI/UX ARCHITECT performing pixel-perfect reverse engineering of a quiz funnel from screenshots.
+Your output is a COMPLETE VISUAL BLUEPRINT — everything a developer needs to recreate this design from scratch without seeing the original code.
+
+CRITICAL RULES:
+- ALL values must be CSS-ready: exact hex codes, px values, CSS gradient syntax, box-shadow syntax
+- DO NOT use vague terms like "medium", "blue", "rounded". Use "#4F46E5", "12px", "border-radius: 12px"
+- If you cannot determine an exact value, give your BEST CSS-ready estimate
+- Analyze EVERY screenshot carefully — each one is a different step of the quiz
+
+CSS TOKENS FROM REAL DOM (calibration data — trust these values):
+{{CSS_TOKENS}}
+
+Return ONLY valid JSON (no markdown, no explanation):
+
+{
+  "design_system": {
+    "colors": {
+      "primary": "#hex",
+      "secondary": "#hex",
+      "accent": "#hex",
+      "background_page": "#hex or gradient CSS",
+      "background_card": "#hex",
+      "text_heading": "#hex",
+      "text_body": "#hex",
+      "text_muted": "#hex",
+      "button_primary_bg": "#hex or gradient CSS",
+      "button_primary_text": "#hex",
+      "button_primary_hover": "#hex",
+      "border_default": "#hex",
+      "border_selected": "#hex",
+      "progress_fill": "#hex or gradient CSS",
+      "progress_track": "#hex",
+      "success": "#hex",
+      "error": "#hex",
+      "option_selected_bg": "#hex",
+      "option_hover_bg": "#hex"
+    },
+    "gradients": [
+      { "css": "linear-gradient(...)", "applied_to": "where" }
+    ],
+    "typography": {
+      "font_family_primary": "font name, fallback",
+      "font_family_secondary": "font name, fallback or same",
+      "heading_large": { "size": "28px", "weight": "700", "line_height": "1.2", "letter_spacing": "-0.02em" },
+      "heading_medium": { "size": "22px", "weight": "600", "line_height": "1.3", "letter_spacing": "0" },
+      "heading_small": { "size": "18px", "weight": "600", "line_height": "1.4", "letter_spacing": "0" },
+      "body": { "size": "16px", "weight": "400", "line_height": "1.6", "letter_spacing": "0" },
+      "body_small": { "size": "14px", "weight": "400", "line_height": "1.5", "letter_spacing": "0" },
+      "caption": { "size": "12px", "weight": "500", "line_height": "1.3", "letter_spacing": "0.03em" },
+      "button": { "size": "16px", "weight": "600", "line_height": "1", "letter_spacing": "0.01em", "text_transform": "none" },
+      "option": { "size": "15px", "weight": "500", "line_height": "1.4", "letter_spacing": "0" }
+    },
+    "spacing": {
+      "page_padding": "24px",
+      "section_gap": "32px",
+      "card_padding": "16px 20px",
+      "between_options": "12px",
+      "button_padding": "16px 32px",
+      "heading_margin_bottom": "12px",
+      "progress_bar_margin": "0 0 24px 0"
+    },
+    "dimensions": {
+      "container_max_width": "520px",
+      "button_height": "52px",
+      "button_border_radius": "12px",
+      "card_border_radius": "12px",
+      "progress_bar_height": "6px",
+      "progress_bar_border_radius": "9999px",
+      "input_height": "48px",
+      "input_border_radius": "8px"
+    },
+    "shadows": {
+      "card_default": "CSS box-shadow value",
+      "card_hover": "CSS box-shadow value",
+      "card_selected": "CSS box-shadow value",
+      "button": "CSS box-shadow value",
+      "button_hover": "CSS box-shadow value"
+    },
+    "animations": {
+      "step_transition": { "type": "fadeIn|slideUp|slideLeft", "duration_ms": 400, "easing": "ease-out" },
+      "option_hover": { "transform": "translateY(-2px)", "duration_ms": 200 },
+      "option_select": { "type": "scale-bounce|border-highlight|bg-fill", "duration_ms": 150 },
+      "progress_fill": { "duration_ms": 600, "easing": "ease-out" },
+      "auto_advance_delay_ms": 700
+    }
+  },
+  "layout": {
+    "page_background": "#hex or CSS gradient or pattern description",
+    "container_style": "centered card with shadow | full-width | minimal",
+    "has_header": true,
+    "header_content": "logo text or brand name visible",
+    "option_layout_default": "vertical_list | grid_2col | grid_3col",
+    "option_card_style": "bordered-card | filled-card | minimal-text | image-card",
+    "option_has_icon_or_emoji": true,
+    "option_icon_position": "left | top | none",
+    "cta_button_width": "full-width | auto | fixed-px",
+    "cta_button_position": "bottom-fixed | inline | center"
+  },
+  "ux_flow": {
+    "total_screens": 12,
+    "screens": [
+      {
+        "index": 0,
+        "type": "intro | question | info_interstitial | lead_capture | loading | result | checkout",
+        "question_type": "single_choice | multi_choice | image_select | text_input | email_input | date_picker | slider | button_only | none",
+        "options_count": 4,
+        "options_layout": "vertical_list | grid_2col | grid_3col",
+        "has_emoji_or_icon": true,
+        "has_progress_bar": true,
+        "progress_format": "1/30 | Step 1 of 30 | percentage",
+        "has_back_button": false,
+        "auto_advance": true,
+        "cta_text": "Continue | null if auto-advance",
+        "special_elements": ["trust badge", "social proof stat", "illustration"]
+      }
+    ],
+    "progress_bar": {
+      "type": "continuous | segmented | dots | fraction_text",
+      "position": "top | below_header | inline",
+      "shows_label": true,
+      "label_format": "{current}/{total}"
+    },
+    "transitions": {
+      "between_steps": { "animation": "fadeIn | slideUp | slideLeft", "duration_ms": 400 },
+      "loading_screen": { "exists": true, "duration_ms": 3000, "style": "progressive_messages | spinner | progress_bar" }
+    },
+    "interaction": {
+      "option_click": "highlight + auto-advance after delay",
+      "advance_delay_ms": 700,
+      "back_button_style": "arrow icon top-left | text link | none",
+      "scroll_to_top_on_advance": true
+    }
+  },
+  "visual_mood": {
+    "overall_style": "modern-minimal | playful-colorful | luxury-elegant | clinical-trust | mystical-spiritual",
+    "color_mood": "warm | cool | dark | light | vibrant | muted",
+    "illustration_style": "none | flat-vector | 3d-render | photo | abstract | ethereal",
+    "emoji_usage": "none | in-options | in-headings | heavy-throughout",
+    "trust_indicators": ["type: accuracy stat | reviews | expert badge | money-back"],
+    "unique_design_elements": ["describe any standout visual features"]
+  }
+}`;
+
+// ─── GEMINI: Quiz Logic & Content Blueprint ───
+
+export const GEMINI_QUIZ_LOGIC_BLUEPRINT_PROMPT = `You are a QUIZ MECHANICS ENGINEER and COPYWRITING ANALYST. Reverse-engineer the COMPLETE quiz logic, content, and scoring system from these screenshots.
+
+For EVERY screen, extract the EXACT text content you can see. Do NOT paraphrase — copy the exact words from the screenshots.
+
+CRITICAL TASKS:
+1. Extract exact text for every headline, question, option, CTA, social proof element
+2. Determine the scoring system (how answers map to result categories)
+3. Identify all result profiles and what product/recommendation each leads to
+4. Map the complete quiz flow including info screens and lead capture
+5. Note all persuasion techniques used per screen
+
+KNOWN STEP STRUCTURE (from crawl data):
+{{STEPS_INFO}}
+
+Return ONLY valid JSON (no markdown, no explanation):
+
+{
+  "quiz_content": {
+    "language": "en | it | es | etc",
+    "screens": [
+      {
+        "index": 0,
+        "type": "intro | question | info_interstitial | lead_capture | loading | result | checkout",
+        "headline": "exact headline text from screenshot",
+        "subheadline": "exact subheadline or null",
+        "body_text": "exact body text or null",
+        "question_text": "exact question text or null",
+        "options": [
+          {
+            "label": "exact option text",
+            "subtitle": "exact subtitle or null",
+            "emoji_or_icon": "emoji character or icon description or null",
+            "maps_to_category": "category_id"
+          }
+        ],
+        "cta_text": "exact CTA button text or null",
+        "social_proof": ["exact social proof text"],
+        "trust_elements": ["exact trust badge/text"],
+        "urgency_elements": ["exact urgency text"],
+        "micro_copy": ["exact small print, disclaimers"],
+        "persuasion_techniques": ["curiosity_gap", "social_proof", "commitment_consistency"]
+      }
+    ]
+  },
+  "scoring_system": {
+    "type": "categorical | weighted | branching | simple_count",
+    "categories": [
+      { "id": "cat_id", "label": "Display Name", "description": "what this means" }
+    ],
+    "result_determination": "highest_category_count | weighted_sum | last_branch",
+    "tiebreaker": "first_in_list | random"
+  },
+  "result_profiles": [
+    {
+      "id": "profile_id",
+      "label": "Result Display Name",
+      "headline": "exact result headline",
+      "description": "exact result description text",
+      "product_recommendation": "what is recommended",
+      "cta_text": "exact CTA text",
+      "urgency": "exact urgency text or null",
+      "social_proof": "exact social proof or null"
+    }
+  ],
+  "lead_capture": {
+    "exists": true,
+    "position": "before_result | after_result | during_quiz | none",
+    "fields": ["email"],
+    "incentive_text": "exact text",
+    "required_or_skippable": "required | skippable"
+  },
+  "loading_screen": {
+    "exists": true,
+    "messages": ["exact message 1", "exact message 2", "exact message 3"],
+    "has_progress_animation": true
+  },
+  "copy_style": {
+    "formality": "conversational | formal | playful | scientific",
+    "person": "second_person | first_person",
+    "emoji_frequency": "none | light | moderate | heavy",
+    "power_words": ["specific power words used"],
+    "language": "en | it"
+  },
+  "persuasion_flow": {
+    "hook_stage": { "screens": [0], "techniques": ["curiosity", "social_proof"] },
+    "engagement_stage": { "screens": [1,2,3], "techniques": ["commitment_consistency", "progress"] },
+    "conversion_stage": { "screens": [10,11], "techniques": ["personalization", "scarcity", "authority"] }
+  }
+}`;
+
+// ─── CLAUDE V2: CSS Generation System Prompt ───
+
+export const CLAUDE_GENERATE_CSS_SYSTEM = `You are an expert CSS developer. Generate a COMPLETE CSS design system for a quiz funnel.
+You receive a pixel-perfect visual blueprint extracted from screenshots by an AI vision model.
+Your job is to translate that blueprint into production-ready CSS.
+
+RULES:
+1. Use CSS custom properties (--var) for ALL colors, fonts, spacing, border-radius
+2. Start with :root variables, then *, body reset
+3. Include ALL component styles: .quiz-container, .quiz-step, .quiz-step.active, .progress-bar, .progress-fill, .quiz-question, .quiz-options, .quiz-option, .quiz-option.selected, .quiz-option:hover, .quiz-btn, .quiz-btn-back, .quiz-result, .quiz-intro, .quiz-lead-capture, .quiz-checkout, .quiz-info-screen, .quiz-loading
+4. Include @keyframes for: fadeIn, fadeOut, slideUp, scaleIn, progressFill, pulseLoading
+5. Include responsive media queries (mobile-first, breakpoint at 640px)
+6. The CSS must use the EXACT hex colors, px values, and font properties from the blueprint
+7. Match the visual mood described in the blueprint (e.g., if "mystical-spiritual" use appropriate gradients/effects)
+8. Output ONLY raw CSS — no <style> tags, no markdown, no explanation
+9. DO NOT use external fonts via @import — use system font stacks that match the described style`;
+
+// ─── CLAUDE V2: JS Generation System Prompt ───
+
+export const CLAUDE_GENERATE_JS_SYSTEM = `You are an expert JavaScript developer specializing in interactive quiz funnels.
+Generate the COMPLETE JavaScript engine for a quiz funnel.
+
+The quiz must handle ALL these step types:
+- "intro": show intro screen, CTA button advances to first question
+- "question": click on option → highlight with .selected class → save answer → auto-advance after delay
+- "info_interstitial": show info/motivational screen + Continue button
+- "lead_capture": email form with basic validation + submit button
+- "loading": show progressive messages with animation, then auto-advance to result
+- "result": calculate winning category, show matching result profile, CTA with product link
+- "checkout": show offer with CTA link
+
+RULES:
+1. Use ONLY vanilla JavaScript — ZERO external dependencies
+2. Find elements via data-attributes: data-step="N", data-step-type="type", data-option, data-category
+3. Show only one step at a time (.quiz-step.active visible, others hidden)
+4. Implement smooth transitions: fadeOut current step, fadeIn next step
+5. Progress bar: update width % based on current step / total question steps
+6. Scoring: track answers in an object, count category occurrences, find winner
+7. Back button: functional for every step except the first
+8. Loading screen: show sequential messages with delays, then show result
+9. Result: find the winning profile by highest category count, populate result step dynamically
+10. Scroll to top on each step change
+11. Output ONLY raw JavaScript — no <script> tags, no markdown, no explanation`;
+
+// ─── CLAUDE V2: HTML Generation System Prompt ───
+
+export const CLAUDE_GENERATE_HTML_SYSTEM = `You are an expert frontend developer generating HTML markup for a quiz funnel.
+The CSS and JavaScript will be injected automatically by the server. Generate ONLY the body markup.
+
+RULES:
+1. Generate ONLY <body> content — NO <!DOCTYPE>, <html>, <head>, <style>, or <script> tags
+2. Start with <div class="progress-bar"><div class="progress-fill"></div></div>
+3. Then <div class="quiz-container">...</div> wrapping ALL steps
+4. Every step: <div class="quiz-step" data-step="N" data-step-type="type">...</div>
+5. First step gets class "active" in addition to "quiz-step"
+6. Options: <div class="quiz-option" data-option="value" data-category="category_id">label</div>
+7. CTA buttons: <button class="quiz-btn">text</button>
+8. Back buttons: <button class="quiz-btn-back">← Back</button>
+9. Include ALL steps from the branding — do NOT skip any
+10. Include a results step with data-step-type="result" containing ALL result profiles (hidden by default, JS will show the matching one)
+11. Include a loading step with data-step-type="loading" if the blueprint specifies one
+12. Use the EXACT text content from the branding for each step
+13. If options have emojis/icons, include them as emoji characters or as <span class="option-icon">...</span>
+14. Output ONLY raw HTML markup, no explanation, no markdown`;

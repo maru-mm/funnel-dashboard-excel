@@ -1,18 +1,16 @@
 import { NextRequest } from 'next/server';
-import { waitUntil } from '@vercel/functions';
 import Anthropic from '@anthropic-ai/sdk';
 
 export const maxDuration = 800;
 export const dynamic = 'force-dynamic';
 
 import {
-  runMultiAgentAnalysis,
-  cloneQuizHtml,
+  runVisualBlueprintAnalysis,
+  runQuizLogicBlueprintAnalysis,
 } from '@/lib/quiz-multiagent-engine';
 import { generateBranding, buildBrandingInputFromDb } from '@/lib/branding-generator';
 import { fetchFunnelCrawlStepsByFunnel } from '@/lib/supabase-operations';
-import { CLAUDE_TRANSFORM_SYSTEM_PROMPT } from '@/lib/quiz-multiagent-prompts';
-import type { MasterSpec } from '@/lib/quiz-multiagent-types';
+import type { VisualBlueprint, QuizBlueprint } from '@/lib/quiz-multiagent-types';
 import type { GeneratedBranding } from '@/types';
 import { supabase } from '@/lib/supabase';
 
@@ -52,338 +50,16 @@ interface RequestBody {
   mode?: 'background' | 'streaming';
 }
 
-type JobPhase = 'pending' | 'cloning' | 'screenshots' | 'analyzing' | 'branding' | 'transforming' | 'completed' | 'failed';
+// =====================================================
+// SSE HELPERS
+// =====================================================
 
-interface ProgressEntry {
-  phase: string;
-  message: string;
-  timestamp: string;
-  data?: Record<string, unknown>;
+function sseEncode(data: Record<string, unknown>): Uint8Array {
+  return new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`);
 }
 
 // =====================================================
-// SUPABASE JOB HELPERS
-// =====================================================
-
-async function createJob(body: RequestBody): Promise<string> {
-  const { data, error } = await supabase
-    .from('multiagent_jobs')
-    .insert({
-      entry_url: body.entryUrl,
-      funnel_name: body.funnelName || '',
-      params: {
-        product: body.product,
-        funnelSteps: body.funnelSteps,
-        funnelMeta: body.funnelMeta,
-        extraInstructions: body.extraInstructions,
-      },
-      status: 'pending',
-      current_phase: 'pending',
-      progress: [],
-    })
-    .select('id')
-    .single();
-
-  if (error || !data) {
-    throw new Error(`Failed to create job: ${error?.message || 'unknown'}`);
-  }
-  return data.id;
-}
-
-async function updateJobPhase(
-  jobId: string,
-  status: JobPhase,
-  phase: string,
-  message: string,
-  extraData?: Record<string, unknown>,
-) {
-  const progressEntry: ProgressEntry = {
-    phase,
-    message,
-    timestamp: new Date().toISOString(),
-    ...(extraData ? { data: extraData } : {}),
-  };
-
-  // Append to progress array and update status
-  const { error } = await supabase.rpc('append_multiagent_progress', {
-    job_id: jobId,
-    new_status: status,
-    new_phase: phase,
-    entry: progressEntry,
-  }).single();
-
-  // Fallback if RPC doesn't exist: read-modify-write
-  if (error) {
-    const { data: existing } = await supabase
-      .from('multiagent_jobs')
-      .select('progress')
-      .eq('id', jobId)
-      .single();
-
-    const currentProgress = (existing?.progress as ProgressEntry[]) || [];
-    currentProgress.push(progressEntry);
-
-    await supabase
-      .from('multiagent_jobs')
-      .update({
-        status,
-        current_phase: phase,
-        progress: currentProgress,
-      })
-      .eq('id', jobId);
-  }
-}
-
-async function completeJob(
-  jobId: string,
-  resultHtml: string,
-  masterSpec: MasterSpec,
-  branding: GeneratedBranding,
-  usage: { input_tokens: number; output_tokens: number },
-) {
-  await supabase
-    .from('multiagent_jobs')
-    .update({
-      status: 'completed',
-      current_phase: 'completed',
-      result_html: resultHtml,
-      master_spec: masterSpec,
-      branding,
-      usage,
-    })
-    .eq('id', jobId);
-}
-
-async function failJob(jobId: string, error: unknown) {
-  const errorMsg = error instanceof Error ? error.message : String(error);
-  await supabase
-    .from('multiagent_jobs')
-    .update({
-      status: 'failed',
-      current_phase: 'failed',
-      error: errorMsg,
-    })
-    .eq('id', jobId);
-}
-
-// =====================================================
-// PROMPT BUILDER
-// =====================================================
-
-function buildTransformPrompt(
-  clonedHtml: string,
-  masterSpec: MasterSpec,
-  branding: GeneratedBranding,
-  product: ProductData,
-  extraInstructions: string
-): string {
-  let prompt = '';
-
-  prompt += `=== HTML ORIGINALE DEL QUIZ (da trasformare) ===\n`;
-  prompt += `Questo è il codice HTML clonato da un quiz funnel reale con Playwright.\n`;
-  prompt += `ATTENZIONE: Il JavaScript originale NON funziona più (gli script sono stati rimossi/rotti durante la clonazione).\n`;
-  prompt += `DEVI mantenere la struttura HTML e il CSS, ma DEVI RISCRIVERE il JavaScript da zero per rendere il quiz FUNZIONANTE.\n`;
-  prompt += `RIMUOVI tutti i tag <script src="..."> esterni e tutti gli script inline rotti.\n\n`;
-  prompt += clonedHtml.slice(0, 120000);
-  prompt += '\n\n';
-
-  prompt += `=== ANALISI COPY & MARKETING (da Agent CRO) ===\n`;
-  prompt += `Questi sono i pattern di persuasione per ogni schermata. DEVI preservarli.\n\n`;
-  if (masterSpec.cro?.copy_architecture?.per_screen) {
-    for (const screen of masterSpec.cro.copy_architecture.per_screen) {
-      prompt += `SCREEN ${screen.screen_index} [${screen.screen_type}]:\n`;
-      if (screen.headline) {
-        prompt += `  Headline originale: "${screen.headline.text}" → tecnica: ${screen.headline.technique}\n`;
-      }
-      if (screen.subheadline) {
-        prompt += `  Subheadline originale: "${screen.subheadline.text}" → tecnica: ${screen.subheadline.technique}\n`;
-      }
-      if (screen.cta_elements?.length > 0) {
-        for (const cta of screen.cta_elements) {
-          prompt += `  CTA: "${cta.text}" → tecnica: ${cta.technique}\n`;
-        }
-      }
-      if (screen.option_copy?.length) {
-        prompt += `  Opzioni quiz:\n`;
-        for (const opt of screen.option_copy) {
-          prompt += `    - "${opt.label}" → angolo: ${opt.persuasion_angle}\n`;
-        }
-      }
-      if (screen.social_proof_elements?.length) {
-        for (const sp of screen.social_proof_elements) {
-          prompt += `  Social proof: "${sp.text}" [${sp.type}]\n`;
-        }
-      }
-      if (screen.urgency_elements?.length) {
-        for (const ue of screen.urgency_elements) {
-          prompt += `  Urgency: "${ue.text}" [${ue.type}]\n`;
-        }
-      }
-      prompt += '\n';
-    }
-  }
-
-  prompt += `=== LOGICA QUIZ (da Agent Quiz Logic) — USA QUESTO PER SCRIVERE IL JAVASCRIPT ===\n`;
-  prompt += `Usa queste informazioni per implementare il sistema di scoring nel tuo JavaScript.\n`;
-  if (masterSpec.quiz_logic?.quiz_mechanics) {
-    prompt += `Sistema scoring: ${masterSpec.quiz_logic.quiz_mechanics.scoring_system}\n`;
-    prompt += `Categorie: ${masterSpec.quiz_logic.quiz_mechanics.categories.map(c => c.label).join(', ')}\n`;
-    prompt += `Determinazione risultato: ${masterSpec.quiz_logic.quiz_mechanics.result_determination}\n\n`;
-  }
-  if (masterSpec.quiz_logic?.questions) {
-    prompt += `Domande (${masterSpec.quiz_logic.questions.length}):\n`;
-    for (const q of masterSpec.quiz_logic.questions) {
-      prompt += `  Q${q.index}: "${q.question_text}" [${q.question_type}]\n`;
-      if (q.options) {
-        for (const opt of q.options) {
-          prompt += `    - "${opt.label}" → ${opt.maps_to_categories.join(', ')}\n`;
-        }
-      }
-    }
-    prompt += '\n';
-  }
-  if (masterSpec.quiz_logic?.result_profiles) {
-    prompt += `Profili risultato (${masterSpec.quiz_logic.result_profiles.length}):\n`;
-    for (const rp of masterSpec.quiz_logic.result_profiles) {
-      prompt += `  [${rp.id}] "${rp.label}": ${rp.headline}\n`;
-    }
-    prompt += '\n';
-  }
-
-  prompt += `=== NUOVO PRODOTTO (swappa tutto il contenuto per questo) ===\n`;
-  prompt += `Brand: ${product.brandName}\n`;
-  prompt += `Prodotto: ${product.name}\n`;
-  prompt += `Descrizione: ${product.description}\n`;
-  prompt += `Prezzo: €${product.price}\n`;
-  prompt += `Benefici: ${product.benefits.join('; ')}\n`;
-  prompt += `CTA principale: ${product.ctaText}\n`;
-  prompt += `URL CTA: ${product.ctaUrl}\n\n`;
-
-  prompt += `=== BRANDING GENERATO PER IL NUOVO PRODOTTO ===\n`;
-  const bi = branding.brandIdentity;
-  prompt += `Tagline: ${bi.tagline}\n`;
-  prompt += `Tono: ${bi.voiceTone}\n`;
-  prompt += `Hook emotivo: ${bi.emotionalHook}\n`;
-  prompt += `USP: ${bi.uniqueSellingProposition}\n`;
-  prompt += `Colori brand: primary=${bi.colorPalette.primary}, secondary=${bi.colorPalette.secondary}, accent=${bi.colorPalette.accent}\n\n`;
-
-  if (branding.quizBranding) {
-    const qb = branding.quizBranding;
-    prompt += `QUIZ COPY PER IL NUOVO PRODOTTO:\n`;
-    prompt += `  Titolo: ${qb.quizTitle}\n`;
-    prompt += `  Sottotitolo: ${qb.quizSubtitle}\n`;
-    prompt += `  Intro: ${qb.quizIntroText}\n`;
-    prompt += `  Progress label: ${qb.progressBarLabel}\n`;
-    prompt += `  Risultato headline: ${qb.resultPageHeadline}\n`;
-    prompt += `  Risultato subheadline: ${qb.resultPageSubheadline}\n`;
-    prompt += `  Risultato body: ${qb.resultPageBodyCopy}\n\n`;
-  }
-
-  prompt += `CONTENUTO PER OGNI STEP:\n`;
-  for (const step of branding.funnelSteps) {
-    prompt += `\nStep ${step.stepIndex} [${step.originalPageType}]:\n`;
-    prompt += `  Headline: ${step.headline}\n`;
-    if (step.subheadline) prompt += `  Subheadline: ${step.subheadline}\n`;
-    if (step.bodyCopy) prompt += `  Body: ${step.bodyCopy}\n`;
-    if (step.ctaTexts.length) prompt += `  CTA: ${step.ctaTexts.join(', ')}\n`;
-    if (step.quizQuestion) prompt += `  Domanda: ${step.quizQuestion}\n`;
-    if (step.quizOptions?.length) {
-      prompt += `  Opzioni:\n`;
-      step.quizOptions.forEach((opt, i) => {
-        const sub = step.quizOptionSubtexts?.[i];
-        prompt += `    ${i + 1}. ${opt}${sub ? ` — ${sub}` : ''}\n`;
-      });
-    }
-    if (step.socialProof.length) prompt += `  Social proof: ${step.socialProof.join('; ')}\n`;
-    if (step.urgencyElements.length) prompt += `  Urgency: ${step.urgencyElements.join('; ')}\n`;
-  }
-  prompt += '\n';
-
-  const ge = branding.globalElements;
-  if (ge.socialProofStatements.length) prompt += `Social proof globale: ${ge.socialProofStatements.join(' | ')}\n`;
-  if (ge.urgencyElements.length) prompt += `Urgency globale: ${ge.urgencyElements.join(' | ')}\n`;
-  if (ge.trustBadges.length) prompt += `Trust badges: ${ge.trustBadges.join(', ')}\n`;
-  if (ge.guaranteeText) prompt += `Garanzia: ${ge.guaranteeText}\n`;
-  prompt += '\n';
-
-  if (masterSpec.synthesis_notes?.critical_elements_to_preserve?.length) {
-    prompt += `=== ELEMENTI CRITICI DA PRESERVARE (dalla sintesi multi-agente) ===\n`;
-    for (const elem of masterSpec.synthesis_notes.critical_elements_to_preserve) {
-      prompt += `⚠️ ${elem}\n`;
-    }
-    prompt += '\n';
-  }
-
-  if (extraInstructions) {
-    prompt += `=== ISTRUZIONI AGGIUNTIVE DALL'UTENTE ===\n${extraInstructions}\n\n`;
-  }
-
-  // UX flow info for JS implementation
-  if (masterSpec.ux_flow?.flow_structure?.screen_sequence) {
-    prompt += `=== FLUSSO UX (da Agent UX Flow) — USA QUESTO PER LA NAVIGAZIONE JS ===\n`;
-    prompt += `Schermate totali: ${masterSpec.ux_flow.flow_structure.total_screens}\n`;
-    for (const screen of masterSpec.ux_flow.flow_structure.screen_sequence) {
-      prompt += `  Screen ${screen.index}: [${screen.type}]`;
-      if (screen.auto_advance_on_select) prompt += ` auto-avanza dopo ${screen.delay_before_advance_ms || 700}ms`;
-      if (screen.has_progress_bar) prompt += ` | progress bar: "${screen.progress_format}"`;
-      if (screen.has_back_button) prompt += ` | ha pulsante indietro`;
-      prompt += `\n`;
-    }
-    prompt += '\n';
-  }
-  if (masterSpec.ux_flow?.transitions) {
-    const t = masterSpec.ux_flow.transitions;
-    prompt += `Transizioni:\n`;
-    if (t.between_questions) prompt += `  Tra domande: ${t.between_questions.exit_animation} → ${t.between_questions.enter_animation} (${t.between_questions.duration_ms}ms)\n`;
-    if (t.loading_to_result) prompt += `  Loading→Risultato: ${t.loading_to_result.type} (${t.loading_to_result.duration_ms}ms)\n`;
-    prompt += '\n';
-  }
-  if (masterSpec.ux_flow?.loading_states?.has_loading_screen) {
-    const ls = masterSpec.ux_flow.loading_states;
-    prompt += `Loading screen:\n`;
-    prompt += `  Messaggi: ${ls.loading_messages?.join(' → ')}\n`;
-    prompt += `  Durata: ${ls.loading_duration_ms}ms\n`;
-    prompt += `  Tipo: ${ls.loading_type}\n\n`;
-  }
-
-  prompt += `=== ISTRUZIONI FINALI — CRITICHE ===\n\n`;
-
-  prompt += `1. STRUTTURA HTML & CSS: Mantieni la struttura HTML e il CSS dell'originale.\n`;
-  prompt += `   Preserva classi, ID, nesting. Preserva il CSS (colori, font, layout, animazioni).\n\n`;
-
-  prompt += `2. CONTENUTI TESTUALI: Swappa tutti i testi per il nuovo prodotto "${product.name}" di "${product.brandName}".\n`;
-  prompt += `   Preserva lo stesso numero di domande, opzioni, e profili risultato.\n`;
-  prompt += `   Preserva gli stessi pattern di persuasione per ogni schermata.\n`;
-  prompt += `   La pagina di RISULTATO è la più importante — deve essere ricca e persuasiva.\n\n`;
-
-  prompt += `3. JAVASCRIPT — OBBLIGATORIO, RISCRIVI DA ZERO:\n`;
-  prompt += `   - RIMUOVI tutti i tag <script src="..."> (puntano al dominio originale, non funzionano)\n`;
-  prompt += `   - RIMUOVI tutti gli <script> inline esistenti (sono rotti)\n`;
-  prompt += `   - SCRIVI UN UNICO <script> NUOVO prima di </body> con TUTTA la logica:\n\n`;
-
-  prompt += `   a) NAVIGAZIONE: Mostra solo uno step alla volta. Al click su un'opzione → evidenzia → salva risposta → dopo 600-800ms avanza al prossimo step con animazione fadeOut/fadeIn.\n`;
-  prompt += `   b) PROGRESS BAR: Aggiorna la barra di progresso ad ogni step.\n`;
-  prompt += `   c) SCORING: Ogni opzione ha un data-category="ID_CATEGORIA". Al click salva in un oggetto. Alla fine conta le categorie e determina il vincitore.\n`;
-  prompt += `   d) LOADING SCREEN: Dopo l'ultima domanda, mostra una schermata con messaggi progressivi (3-5 secondi) poi mostra il risultato.\n`;
-  prompt += `   e) RISULTATO: Mostra il profilo corrispondente al punteggio più alto. Popola headline, descrizione, CTA con link "${product.ctaUrl}".\n`;
-  prompt += `   f) Usa SOLO vanilla JavaScript. ZERO dipendenze esterne. Il file HTML deve funzionare aprendo da solo nel browser.\n`;
-  prompt += `   g) Aggiungi data-step="0", data-step="1" etc. ai contenitori di ogni schermata per la navigazione.\n`;
-  prompt += `   h) Aggiungi data-category="CATEGORY_ID" ad ogni opzione cliccabile per lo scoring.\n`;
-  prompt += `   i) Aggiungi data-result="PROFILE_ID" ai contenitori dei risultati per mostrare quello giusto.\n\n`;
-
-  prompt += `4. STILE CSS PER LE SELEZIONI (aggiungi in un tag <style>):\n`;
-  prompt += `   - Stile .selected per le opzioni selezionate (border colorato, scale leggero, background tint)\n`;
-  prompt += `   - Stile per le transizioni tra step (opacity transition)\n`;
-  prompt += `   - cursor: pointer sulle opzioni cliccabili\n\n`;
-
-  prompt += `Output: SOLO il file HTML completo da <!DOCTYPE html> a </html>.\n`;
-  prompt += `Il quiz DEVE essere navigabile e funzionante. Testalo mentalmente: intro → domande → loading → risultato.`;
-
-  return prompt;
-}
-
-// =====================================================
-// SHARED PIPELINE HELPERS
+// SCREENSHOT + STEPS FETCHER
 // =====================================================
 
 async function fetchScreenshotsAndSteps(
@@ -422,25 +98,176 @@ async function fetchScreenshotsAndSteps(
   return { screenshots, stepsInfo };
 }
 
-function buildFallbackMasterSpec(
+// =====================================================
+// LIVE SCREENSHOT CAPTURE (fallback when DB has none)
+// =====================================================
+
+interface LiveScreenshotResult {
+  screenshots: string[];
+  cssTokens: import('@/app/api/swipe-quiz/screenshot/route').CssTokens | null;
+}
+
+async function captureLiveScreenshots(
+  entryUrl: string,
+  funnelSteps?: AffiliateFunnelStep[],
+  onProgress?: (msg: string) => void,
+): Promise<LiveScreenshotResult> {
+  const { launchBrowser } = await import('@/lib/get-browser');
+
+  const screenshots: string[] = [];
+  let cssTokens: import('@/app/api/swipe-quiz/screenshot/route').CssTokens | null = null;
+
+  // Collect ALL unique URLs from steps
+  const urlsToCapture: string[] = [entryUrl];
+  if (funnelSteps) {
+    const seen = new Set<string>([entryUrl]);
+    for (const step of funnelSteps) {
+      if (step.url && !seen.has(step.url)) {
+        seen.add(step.url);
+        urlsToCapture.push(step.url);
+      }
+    }
+  }
+
+  const totalUrls = urlsToCapture.length;
+  onProgress?.(`Avvio Playwright — ${totalUrls} pagine da catturare...`);
+
+  const browser = await launchBrowser();
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    viewport: { width: 1280, height: 800 },
+    ignoreHTTPSErrors: true,
+  });
+
+  const page = await context.newPage();
+
+  try {
+    for (let i = 0; i < totalUrls; i++) {
+      const url = urlsToCapture[i];
+      const slug = url.split('/').filter(Boolean).pop() || url;
+      onProgress?.(`Screenshot ${i + 1}/${totalUrls}: ${slug}`);
+
+      try {
+        await page.goto(url, { waitUntil: 'networkidle', timeout: 15000 });
+        await page.waitForTimeout(1500);
+
+        // Dismiss popups on first page only
+        if (i === 0) {
+          try {
+            const dismissSelectors = [
+              '[class*="cookie"] button', '[class*="consent"] button',
+              '[class*="popup"] [class*="close"]', '[class*="modal"] [class*="close"]',
+              'button[aria-label="Close"]', 'button[aria-label="Chiudi"]',
+            ];
+            for (const sel of dismissSelectors) {
+              const btn = page.locator(sel).first();
+              if (await btn.isVisible({ timeout: 300 }).catch(() => false)) {
+                await btn.click({ timeout: 500 }).catch(() => {});
+                await page.waitForTimeout(300);
+              }
+            }
+          } catch { /* ignore */ }
+        }
+
+        const buf = await page.screenshot({ fullPage: true, type: 'png', timeout: 10000 });
+        screenshots.push(buf.toString('base64'));
+
+        // Extract CSS tokens from the first page
+        if (i === 0) {
+          try {
+            cssTokens = await page.evaluate(() => {
+              function getTokens(selectors: string[]) {
+                for (const sel of selectors) {
+                  const el = document.querySelector(sel);
+                  if (!el) continue;
+                  const s = window.getComputedStyle(el);
+                  return {
+                    color: s.color, bg: s.backgroundColor, fontFamily: s.fontFamily,
+                    fontSize: s.fontSize, fontWeight: s.fontWeight, borderRadius: s.borderRadius,
+                    padding: s.padding, boxShadow: s.boxShadow, border: s.border,
+                    lineHeight: s.lineHeight, maxWidth: s.maxWidth,
+                  };
+                }
+                return null;
+              }
+              return {
+                body: getTokens(['body']),
+                heading: getTokens(['h1', 'h2', '[class*="title"]', '[class*="heading"]', '[class*="headline"]', '[class*="question"]']),
+                button: getTokens(['button[class*="cta"]', 'button[class*="primary"]', 'button[class*="btn"]', 'a[class*="cta"]', 'a[class*="btn"]', 'button:not([class*="close"]):not([class*="dismiss"])']),
+                card: getTokens(['[class*="option"]', '[class*="card"]', '[class*="answer"]', '[class*="choice"]', '[class*="item"]']),
+                progressBar: getTokens(['[class*="progress"]', '[role="progressbar"]', '[class*="step-indicator"]']),
+                container: getTokens(['[class*="container"]', '[class*="wrapper"]', 'main', '[class*="content"]', '[class*="quiz"]']),
+                link: getTokens(['a[href]', '[class*="link"]']),
+              };
+            });
+          } catch { /* best effort */ }
+        }
+      } catch (err) {
+        console.warn(`[multiagent-v2] Screenshot failed for ${url}:`, err instanceof Error ? err.message : err);
+      }
+    }
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+
+  console.log(`[multiagent-v2] Captured ${screenshots.length}/${totalUrls} screenshots in single browser session`);
+  return { screenshots, cssTokens };
+}
+
+// =====================================================
+// BRANDING GENERATOR
+// =====================================================
+
+async function generateBrandingForProduct(
   entryUrl: string,
   funnelName: string,
-  stepsInfo: Array<{ index: number; title: string; type: string }>,
-): MasterSpec {
-  return {
-    visual: {} as MasterSpec['visual'],
-    ux_flow: {} as MasterSpec['ux_flow'],
-    cro: { copy_architecture: { per_screen: [] } } as unknown as MasterSpec['cro'],
-    quiz_logic: {
-      quiz_mechanics: { scoring_system: 'categorical', categories: [], result_determination: 'highest_category_count', tiebreaker_rule: 'first_in_list' },
-      questions: [], result_profiles: [],
-      lead_capture: { position: 'none', required: false, fields: [], incentive_text: '', skip_option: true, privacy_text: '' },
-      loading_screen: { exists: false, messages: [], duration_ms: 0, fake_progress: false, analysis_labels: [] },
-      data_tracking: { tracks_answers: false, sends_to_external: false, external_service_hints: [], utm_passthrough: false },
-    },
-    synthesis_notes: { conflicts_resolved: [], confidence_score: 0.3, warnings: ['No screenshots available — limited analysis'], critical_elements_to_preserve: [] },
-    metadata: { original_url: entryUrl, funnel_name: funnelName, total_steps: stepsInfo.length, analyzed_at: new Date().toISOString(), agents_used: ['metadata_only'] },
-  };
+  product: ProductData,
+  funnelMeta?: Record<string, unknown>,
+): Promise<GeneratedBranding | null> {
+  try {
+    const crawlSteps = await fetchFunnelCrawlStepsByFunnel(entryUrl, funnelName);
+    if (crawlSteps.length === 0) return null;
+
+    const brandingInput = buildBrandingInputFromDb(
+      {
+        name: product.name,
+        description: product.description,
+        price: product.price,
+        benefits: product.benefits,
+        cta_text: product.ctaText,
+        cta_url: product.ctaUrl,
+        brand_name: product.brandName,
+        image_url: product.imageUrl,
+      },
+      crawlSteps.map(row => ({
+        step_index: row.step_index,
+        url: row.url,
+        title: row.title,
+        step_data: row.step_data,
+        vision_analysis: row.vision_analysis,
+        funnel_name: row.funnel_name,
+        entry_url: row.entry_url,
+        funnel_tag: row.funnel_tag,
+      })),
+      {
+        provider: 'gemini',
+        tone: 'professional',
+        language: 'it',
+        funnelType: funnelMeta?.funnel_type as string,
+        analysisSummary: funnelMeta?.analysis_summary as string,
+        persuasionTechniques: funnelMeta?.persuasion_techniques as string[],
+        leadCaptureMethod: funnelMeta?.lead_capture_method as string,
+        notableElements: funnelMeta?.notable_elements as string[],
+      },
+    );
+
+    const result = await generateBranding(brandingInput);
+    return result.success && result.branding ? result.branding : null;
+  } catch (err) {
+    console.warn('[multiagent-v2] Branding generation failed:', err);
+    return null;
+  }
 }
 
 function buildFallbackBranding(
@@ -497,62 +324,205 @@ function buildFallbackBranding(
   };
 }
 
-async function generateBrandingForProduct(
-  entryUrl: string,
-  funnelName: string,
+// =====================================================
+// UNIFIED PROMPT — Single Claude call for complete HTML
+// =====================================================
+
+function buildUnifiedPrompt(
+  visualBlueprint: VisualBlueprint,
+  quizBlueprint: QuizBlueprint,
+  branding: GeneratedBranding,
   product: ProductData,
-  funnelMeta?: Record<string, unknown>,
-): Promise<GeneratedBranding | null> {
-  try {
-    const crawlSteps = await fetchFunnelCrawlStepsByFunnel(entryUrl, funnelName);
-    if (crawlSteps.length === 0) return null;
+  extraInstructions: string,
+): string {
+  let prompt = '';
+  const ds = visualBlueprint.design_system;
+  const layout = visualBlueprint.layout;
+  const mood = visualBlueprint.visual_mood;
+  const ux = visualBlueprint.ux_flow;
+  const screens = quizBlueprint.quiz_content?.screens || [];
+  const scoring = quizBlueprint.scoring_system;
+  const resultProfiles = quizBlueprint.result_profiles || [];
 
-    const brandingInput = buildBrandingInputFromDb(
-      {
-        name: product.name,
-        description: product.description,
-        price: product.price,
-        benefits: product.benefits,
-        cta_text: product.ctaText,
-        cta_url: product.ctaUrl,
-        brand_name: product.brandName,
-        image_url: product.imageUrl,
-      },
-      crawlSteps.map(row => ({
-        step_index: row.step_index,
-        url: row.url,
-        title: row.title,
-        step_data: row.step_data,
-        vision_analysis: row.vision_analysis,
-        funnel_name: row.funnel_name,
-        entry_url: row.entry_url,
-        funnel_tag: row.funnel_tag,
-      })),
-      {
-        provider: 'gemini',
-        tone: 'professional',
-        language: 'it',
-        funnelType: funnelMeta?.funnel_type as string,
-        analysisSummary: funnelMeta?.analysis_summary as string,
-        persuasionTechniques: funnelMeta?.persuasion_techniques as string[],
-        leadCaptureMethod: funnelMeta?.lead_capture_method as string,
-        notableElements: funnelMeta?.notable_elements as string[],
-      },
-    );
-
-    const result = await generateBranding(brandingInput);
-    return result.success && result.branding ? result.branding : null;
-  } catch (err) {
-    console.warn('[multiagent] Branding generation failed:', err);
-    return null;
+  // ─── VISUAL DESIGN SPEC ───
+  prompt += `=== VISUAL DESIGN (replica questi valori ESATTI dal quiz originale) ===\n`;
+  if (ds?.colors) {
+    prompt += `COLORI:\n`;
+    prompt += `  Primario: ${ds.colors.primary || '#4F46E5'}\n`;
+    prompt += `  Secondario: ${ds.colors.secondary || '#7C3AED'}\n`;
+    prompt += `  Accento: ${ds.colors.accent || '#F59E0B'}\n`;
+    prompt += `  Background pagina: ${ds.colors.background_page || '#F8FAFC'}\n`;
+    prompt += `  Background card: ${ds.colors.background_card || '#FFFFFF'}\n`;
+    prompt += `  Testo heading: ${ds.colors.text_heading || '#1F2937'}\n`;
+    prompt += `  Testo body: ${ds.colors.text_body || '#4B5563'}\n`;
+    prompt += `  Bottone BG: ${ds.colors.button_primary_bg || '#4F46E5'}\n`;
+    prompt += `  Bottone testo: ${ds.colors.button_primary_text || '#FFFFFF'}\n`;
+    prompt += `  Bordo default: ${ds.colors.border_default || '#E5E7EB'}\n`;
+    prompt += `  Bordo selezionato: ${ds.colors.border_selected || '#4F46E5'}\n`;
+    prompt += `  Progress fill: ${ds.colors.progress_fill || '#4F46E5'}\n`;
+    prompt += `  Opzione selezionata BG: ${ds.colors.option_selected_bg || '#EEF2FF'}\n`;
   }
+  if (ds?.gradients?.length > 0) {
+    prompt += `GRADIENTI: ${ds.gradients.map(g => `${g.css} (${g.applied_to})`).join('; ')}\n`;
+  }
+  if (ds?.typography) {
+    prompt += `TIPOGRAFIA:\n`;
+    prompt += `  Font: ${ds.typography.font_family_primary || 'Inter, system-ui, sans-serif'}\n`;
+    prompt += `  Heading: ${ds.typography.heading_large?.size || '28px'}/${ds.typography.heading_large?.weight || '700'}\n`;
+    prompt += `  Body: ${ds.typography.body?.size || '16px'}/${ds.typography.body?.weight || '400'}\n`;
+    prompt += `  Bottone: ${ds.typography.button?.size || '16px'}/${ds.typography.button?.weight || '600'}\n`;
+  }
+  if (ds?.spacing) {
+    prompt += `SPACING: page=${ds.spacing.page_padding || '24px'}, card=${ds.spacing.card_padding || '16px 20px'}, opzioni gap=${ds.spacing.between_options || '12px'}\n`;
+  }
+  if (ds?.dimensions) {
+    prompt += `DIMENSIONI: container=${ds.dimensions.container_max_width || '520px'}, btn-h=${ds.dimensions.button_height || '52px'}, btn-radius=${ds.dimensions.button_border_radius || '12px'}, card-radius=${ds.dimensions.card_border_radius || '12px'}, progress-h=${ds.dimensions.progress_bar_height || '6px'}\n`;
+  }
+  if (ds?.shadows) {
+    prompt += `OMBRE: card=${ds.shadows.card_default || 'none'}, card-hover=${ds.shadows.card_hover || 'none'}, btn=${ds.shadows.button || 'none'}\n`;
+  }
+  if (ds?.animations) {
+    prompt += `ANIMAZIONI: step-enter=${ds.animations.step_transition?.type || 'fadeIn'} ${ds.animations.step_transition?.duration_ms || 400}ms, auto-advance=${ds.animations.auto_advance_delay_ms || 700}ms\n`;
+  }
+  prompt += `LAYOUT: sfondo=${layout?.page_background || '#F8FAFC'}, container=${layout?.container_style || 'centered'}, opzioni=${layout?.option_layout_default || 'vertical_list'}, stile-card=${layout?.option_card_style || 'bordered-card'}, emoji=${layout?.option_has_icon_or_emoji ?? true}, btn-width=${layout?.cta_button_width || 'full-width'}\n`;
+  prompt += `MOOD: ${mood?.overall_style || 'modern'}, ${mood?.color_mood || 'light'}, illustrazioni=${mood?.illustration_style || 'none'}\n\n`;
+
+  // ─── UX FLOW ───
+  prompt += `=== FLUSSO UX (${ux?.total_screens || screens.length} schermate) ===\n`;
+  if (ux?.screens) {
+    for (const s of ux.screens) {
+      prompt += `Screen ${s.index} [${s.type}]: ${s.options_count || 0} opzioni, layout=${s.options_layout || 'list'}`;
+      if (s.auto_advance) prompt += `, auto-avanza`;
+      if (s.has_progress_bar) prompt += `, progress="${s.progress_format}"`;
+      if (s.cta_text) prompt += `, CTA="${s.cta_text}"`;
+      prompt += `\n`;
+    }
+  }
+  prompt += `Progress bar: ${ux?.progress_bar?.type || 'continuous'}, posizione=${ux?.progress_bar?.position || 'top'}, formato="${ux?.progress_bar?.label_format || '{current}/{total}'}"\n`;
+  prompt += `Auto-advance delay: ${ux?.interaction?.advance_delay_ms || 700}ms\n`;
+  prompt += `Back button: ${ux?.interaction?.back_button_style || 'none'}\n\n`;
+
+  // ─── QUIZ CONTENT FROM ORIGINAL (STRUCTURE REFERENCE ONLY) ───
+  prompt += `=== STRUTTURA QUIZ ORIGINALE (usa come SCHEMA, ma RISCRIVI tutto per il nuovo prodotto) ===\n`;
+  prompt += `IMPORTANTE: Questi sono i testi ORIGINALI. NON copiarli. Usali solo per capire:\n`;
+  prompt += `- Quanti step ci sono e di che tipo\n`;
+  prompt += `- Quante opzioni per domanda\n`;
+  prompt += `- Il flow (intro → domande → info → loading → risultato)\n`;
+  prompt += `DEVI riscrivere TUTTO adattandolo al prodotto "${product.name}" di "${product.brandName}".\n\n`;
+  for (const s of screens) {
+    prompt += `--- Screen ${s.index} [${s.type}]: `;
+    if (s.question_text) prompt += `TIPO DOMANDA: "${s.question_text}" `;
+    prompt += `${s.options?.length || 0} opzioni`;
+    if (s.cta_text) prompt += `, CTA presente`;
+    prompt += `\n`;
+  }
+
+  // ─── SCORING ───
+  prompt += `\n=== SISTEMA DI SCORING ===\n`;
+  prompt += `Tipo: ${scoring?.type || 'categorical'}\n`;
+  prompt += `Determinazione risultato: ${scoring?.result_determination || 'highest_category_count'}\n`;
+  if (scoring?.categories?.length > 0) {
+    prompt += `Categorie: ${scoring.categories.map(c => `${c.id}="${c.label}"`).join(', ')}\n`;
+  }
+
+  // ─── RESULT PROFILES ───
+  prompt += `\n=== PROFILI RISULTATO (${resultProfiles.length}) ===\n`;
+  for (const rp of resultProfiles) {
+    prompt += `[${rp.id}] "${rp.label}": ${rp.headline}`;
+    if (rp.description) prompt += ` — ${rp.description.slice(0, 150)}`;
+    prompt += `\n`;
+  }
+
+  // ─── LOADING SCREEN ───
+  if (quizBlueprint.loading_screen?.exists) {
+    prompt += `\n=== LOADING SCREEN ===\n`;
+    prompt += `Messaggi: ${quizBlueprint.loading_screen.messages.join(' → ')}\n`;
+  }
+
+  // ─── LEAD CAPTURE ───
+  if (quizBlueprint.lead_capture?.exists) {
+    prompt += `\n=== LEAD CAPTURE ===\n`;
+    prompt += `Posizione: ${quizBlueprint.lead_capture.position}, campi: ${quizBlueprint.lead_capture.fields.join(', ')}\n`;
+    if (quizBlueprint.lead_capture.incentive_text) prompt += `Incentivo: "${quizBlueprint.lead_capture.incentive_text}"\n`;
+  }
+
+  // ─── NEW PRODUCT (THIS IS THE CORE — all content must be about THIS) ───
+  prompt += `\n${'='.repeat(60)}\n`;
+  prompt += `=== IL TUO PRODOTTO — TUTTO il quiz deve parlare di QUESTO ===\n`;
+  prompt += `${'='.repeat(60)}\n`;
+  prompt += `Brand: ${product.brandName}\n`;
+  prompt += `Prodotto: ${product.name}\n`;
+  prompt += `Descrizione: ${product.description}\n`;
+  prompt += `Prezzo: €${product.price}\n`;
+  prompt += `Benefici chiave:\n`;
+  for (const b of product.benefits) {
+    prompt += `  • ${b}\n`;
+  }
+  prompt += `CTA principale: "${product.ctaText}" → ${product.ctaUrl}\n\n`;
+
+  // ─── BRANDING (USE THESE TEXTS AND COLORS) ───
+  const bi = branding.brandIdentity;
+  prompt += `=== BRANDING DEL NUOVO PRODOTTO (usa questi testi e colori) ===\n`;
+  prompt += `Brand: ${bi.brandName}\n`;
+  prompt += `Tagline: ${bi.tagline}\n`;
+  prompt += `Tono di voce: ${bi.voiceTone}\n`;
+  prompt += `Hook emotivo: ${bi.emotionalHook}\n`;
+  prompt += `USP: ${bi.uniqueSellingProposition}\n`;
+  prompt += `Colori brand: primary=${bi.colorPalette.primary}, secondary=${bi.colorPalette.secondary}, accent=${bi.colorPalette.accent}, cta_bg=${bi.colorPalette.ctaBackground}, cta_text=${bi.colorPalette.ctaText}\n\n`;
+
+  if (branding.quizBranding) {
+    const qb = branding.quizBranding;
+    prompt += `COPY DEL QUIZ (usa ESATTAMENTE questi testi):\n`;
+    prompt += `  Titolo quiz: "${qb.quizTitle}"\n`;
+    prompt += `  Sottotitolo: "${qb.quizSubtitle}"\n`;
+    prompt += `  Testo intro: "${qb.quizIntroText}"\n`;
+    prompt += `  Label progress: "${qb.progressBarLabel}"\n`;
+    prompt += `  Headline risultato: "${qb.resultPageHeadline}"\n`;
+    prompt += `  Subheadline risultato: "${qb.resultPageSubheadline}"\n`;
+    prompt += `  Body risultato: "${qb.resultPageBodyCopy}"\n`;
+    prompt += `  Hook personalizzazione: "${qb.personalizationHook}"\n\n`;
+  }
+
+  prompt += `CONTENUTO DETTAGLIATO PER OGNI STEP (usa questi testi):\n`;
+  for (const step of branding.funnelSteps) {
+    prompt += `\n--- Step ${step.stepIndex} [${step.originalPageType}] ---\n`;
+    prompt += `  Headline: "${step.headline}"\n`;
+    if (step.subheadline) prompt += `  Subheadline: "${step.subheadline}"\n`;
+    if (step.bodyCopy) prompt += `  Body: "${step.bodyCopy}"\n`;
+    if (step.ctaTexts?.length) prompt += `  CTA: ${step.ctaTexts.map(t => `"${t}"`).join(', ')}\n`;
+    if (step.quizQuestion) prompt += `  Domanda: "${step.quizQuestion}"\n`;
+    if (step.quizOptions?.length) {
+      prompt += `  Opzioni:\n`;
+      step.quizOptions.forEach((opt, i) => {
+        const sub = step.quizOptionSubtexts?.[i];
+        prompt += `    ${i + 1}. ${opt}${sub ? ` — ${sub}` : ''}\n`;
+      });
+    }
+    if (step.socialProof?.length) prompt += `  Social proof: ${step.socialProof.join('; ')}\n`;
+    if (step.urgencyElements?.length) prompt += `  Urgenza: ${step.urgencyElements.join('; ')}\n`;
+  }
+
+  const ge = branding.globalElements;
+  if (ge?.socialProofStatements?.length) prompt += `\nSocial proof globale: ${ge.socialProofStatements.join(' | ')}\n`;
+  if (ge?.urgencyElements?.length) prompt += `Urgenza globale: ${ge.urgencyElements.join(' | ')}\n`;
+  if (ge?.trustBadges?.length) prompt += `Trust badges: ${ge.trustBadges.join(', ')}\n`;
+  if (ge?.guaranteeText) prompt += `Garanzia: ${ge.guaranteeText}\n`;
+
+  if (extraInstructions) {
+    prompt += `\n=== ISTRUZIONI EXTRA ===\n${extraInstructions}\n`;
+  }
+
+  return prompt;
 }
 
 // =====================================================
-// BACKGROUND PIPELINE (runs via waitUntil)
+// V2 PIPELINE — Screenshot → Gemini Analysis → Claude Generation
 // =====================================================
 
-async function runBackgroundPipeline(jobId: string, body: RequestBody) {
+async function runV2Pipeline(
+  body: RequestBody,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+) {
   const {
     entryUrl,
     funnelName,
@@ -568,136 +538,207 @@ async function runBackgroundPipeline(jobId: string, body: RequestBody) {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
 
-  try {
-    // ── PHASE 1: Clone HTML ──
-    await updateJobPhase(jobId, 'cloning', 'cloning_html', 'Clonazione HTML originale con Playwright...');
+  // ── PHASE 1: Fetch Screenshots ──
+  controller.enqueue(sseEncode({ phase: 'fetching_screenshots', message: 'Recupero screenshot per-step...' }));
 
-    const { clonedData, textNodes, cssTokens } = await cloneQuizHtml(entryUrl);
+  let { screenshots, stepsInfo } = await fetchScreenshotsAndSteps(entryUrl, funnelName, funnelSteps);
 
-    await updateJobPhase(jobId, 'screenshots', 'cloning_done', 'HTML clonato con successo', {
-      htmlSize: clonedData.renderedSize,
-      textNodesCount: textNodes.length,
-      cssCount: clonedData.cssCount,
-    });
+  // CSS tokens extracted from live page (populated by captureLiveScreenshots)
+  let cssTokens = null;
 
-    // ── PHASE 2: Screenshots ──
-    await updateJobPhase(jobId, 'screenshots', 'fetching_screenshots', 'Recupero screenshot per-step...');
-
-    const { screenshots, stepsInfo } = await fetchScreenshotsAndSteps(entryUrl, funnelName, funnelSteps);
-
-    await updateJobPhase(jobId, 'analyzing', 'screenshots_ready', 'Screenshot recuperati', {
-      screenshotsCount: screenshots.length,
-      stepsCount: stepsInfo.length,
-    });
-
-    // ── PHASE 3: Multi-Agent Analysis ──
-    await updateJobPhase(jobId, 'analyzing', 'agents_start', '4 agenti Gemini in parallelo...');
-
-    const extractedTexts = textNodes.map(t => ({
-      index: t.index,
-      text: t.originalText,
-      tag: t.tagName,
-      context: t.classes.split(' ')[0] || '',
+  // Fallback: if no screenshots in DB, capture live with single Playwright browser
+  if (screenshots.length === 0) {
+    controller.enqueue(sseEncode({
+      phase: 'fetching_screenshots',
+      message: 'Nessuno screenshot in DB — cattura live con Playwright...',
     }));
 
-    let masterSpec: MasterSpec;
-
-    if (screenshots.length > 0) {
-      const agentResult = await runMultiAgentAnalysis({
-        screenshots,
-        cssTokens,
-        stepsInfo,
-        extractedTexts,
-        geminiApiKey: geminiKey,
-        onProgress: async (phase, message) => {
-          await updateJobPhase(jobId, 'analyzing', phase, message).catch(() => {});
-        },
-      });
-
-      masterSpec = agentResult.masterSpec;
-      masterSpec.metadata.original_url = entryUrl;
-      masterSpec.metadata.funnel_name = funnelName;
-    } else {
-      masterSpec = buildFallbackMasterSpec(entryUrl, funnelName, stepsInfo);
-    }
-
-    await updateJobPhase(jobId, 'branding', 'agents_done', 'Analisi multi-agente completata', {
-      confidence: masterSpec.synthesis_notes.confidence_score,
-      warningsCount: masterSpec.synthesis_notes.warnings.length,
-    });
-
-    // ── PHASE 4: Branding ──
-    await updateJobPhase(jobId, 'branding', 'generating_branding', 'Generazione branding per il tuo prodotto...');
-
-    let branding = await generateBrandingForProduct(entryUrl, funnelName, product, funnelMeta);
-    if (!branding) {
-      branding = buildFallbackBranding(product, funnelName, funnelSteps);
-    }
-
-    await updateJobPhase(jobId, 'transforming', 'branding_done', 'Branding generato', {
-      brandingSteps: branding.funnelSteps.length,
-    });
-
-    // ── PHASE 5: Claude Transform ──
-    await updateJobPhase(jobId, 'transforming', 'transforming_html', 'Claude: trasformazione chirurgica dell\'HTML...');
-
-    const anthropic = new Anthropic({ apiKey: anthropicKey });
-
-    const userPrompt = buildTransformPrompt(
-      clonedData.html,
-      masterSpec,
-      branding,
-      product,
-      extraInstructions || '',
+    const liveResult = await captureLiveScreenshots(
+      entryUrl,
+      funnelSteps,
+      (msg) => controller.enqueue(sseEncode({ phase: 'fetching_screenshots', message: msg })),
     );
-
-    const userContent: Anthropic.Messages.ContentBlockParam[] = [
-      { type: 'text', text: userPrompt },
-    ];
-
-    if (screenshots.length > 0) {
-      userContent.unshift({
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/png', data: screenshots[0] },
-      });
-    }
-
-    // Non-streaming call for background mode (more robust, no connection to maintain)
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 64000,
-      temperature: 0.3,
-      system: CLAUDE_TRANSFORM_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userContent }],
-    });
-
-    totalInputTokens += message.usage.input_tokens;
-    totalOutputTokens += message.usage.output_tokens;
-
-    const resultHtml = message.content
-      .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
-      .map(b => b.text)
-      .join('');
-
-    // ── DONE ──
-    await completeJob(jobId, resultHtml, masterSpec, branding, {
-      input_tokens: totalInputTokens,
-      output_tokens: totalOutputTokens,
-    });
-
-    console.log(`[multiagent] Job ${jobId} completed. Tokens: ${totalInputTokens}in/${totalOutputTokens}out`);
-  } catch (err) {
-    console.error(`[multiagent] Job ${jobId} failed:`, err);
-    await failJob(jobId, err);
+    screenshots = liveResult.screenshots;
+    cssTokens = liveResult.cssTokens;
   }
-}
 
-// =====================================================
-// SSE HELPERS (for streaming mode)
-// =====================================================
+  controller.enqueue(sseEncode({
+    phase: 'screenshots_ready',
+    message: `${screenshots.length} screenshot, ${stepsInfo.length} step info`,
+    screenshotsCount: screenshots.length,
+    stepsCount: stepsInfo.length,
+  }));
 
-function sseEncode(data: Record<string, unknown>): Uint8Array {
-  return new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`);
+  if (screenshots.length === 0) {
+    throw new Error('Impossibile catturare screenshot del funnel. Verifica che l\'URL sia raggiungibile.');
+  }
+
+  const [visualBlueprint, quizBlueprint] = await Promise.all([
+    runVisualBlueprintAnalysis({
+      screenshots,
+      cssTokens,
+      geminiApiKey: geminiKey,
+      onProgress: (msg) => controller.enqueue(sseEncode({ phase: 'analyzing_visual', message: msg })),
+    }),
+    runQuizLogicBlueprintAnalysis({
+      screenshots,
+      stepsInfo,
+      geminiApiKey: geminiKey,
+      onProgress: (msg) => controller.enqueue(sseEncode({ phase: 'analyzing_quiz_logic', message: msg })),
+    }),
+  ]);
+
+  controller.enqueue(sseEncode({
+    phase: 'analysis_done',
+    message: 'Analisi Gemini completata',
+    visualScreens: visualBlueprint.ux_flow?.total_screens || 0,
+    quizScreens: quizBlueprint.quiz_content?.screens?.length || 0,
+    scoringType: quizBlueprint.scoring_system?.type || 'unknown',
+  }));
+
+  // ── PHASE 3: Generate Branding ──
+  controller.enqueue(sseEncode({ phase: 'generating_branding', message: 'Generazione branding per il tuo prodotto...' }));
+
+  let branding = await generateBrandingForProduct(entryUrl, funnelName, product, funnelMeta);
+  if (!branding) {
+    branding = buildFallbackBranding(product, funnelName, funnelSteps);
+  }
+
+  controller.enqueue(sseEncode({
+    phase: 'branding_done',
+    message: `Branding generato (${branding.funnelSteps.length} step)`,
+    brandingSteps: branding.funnelSteps.length,
+  }));
+
+  // ── PHASE 4: Single Claude call — complete HTML generation ──
+  controller.enqueue(sseEncode({ phase: 'generating_html', message: 'Claude: generazione quiz HTML completo...' }));
+
+  const anthropic = new Anthropic({ apiKey: anthropicKey });
+
+  const systemPrompt = `Sei un ESPERTO SVILUPPATORE FRONTEND e COPYWRITER specializzato in quiz funnel ad alta conversione.
+
+IL TUO COMPITO:
+Genera un SINGOLO FILE HTML COMPLETO che:
+1. REPLICA il DESIGN VISIVO di un quiz originale (colori, layout, font, stile card, progress bar, animazioni)
+2. SWAPPA COMPLETAMENTE il CONTENUTO per il nuovo prodotto — OGNI testo deve parlare del NUOVO prodotto, NON copiare l'originale
+3. Funzioni PERFETTAMENTE: navigazione, scoring, risultato personalizzato
+
+HAI A DISPOSIZIONE:
+- Screenshot del quiz originale → copia SOLO lo stile visivo (colori, layout, forme, animazioni)
+- Visual blueprint → valori CSS esatti da replicare
+- Contenuto originale → usa come STRUTTURA (numero step, tipi di domanda, flow) ma RISCRIVI tutto per il nuovo prodotto
+- Branding del nuovo prodotto → USA QUESTI testi, colori brand, tono
+
+=== REGOLA FONDAMENTALE DELLO SWAP ===
+NON copiare i testi dell'originale. DEVI:
+- Riscrivere OGNI headline, domanda, opzione di risposta per il NUOVO PRODOTTO
+- Le domande devono essere RILEVANTI per il prodotto dell'utente (es. se il prodotto è un integratore, chiedi su dieta/salute/obiettivi; se è skincare, chiedi su tipo di pelle/routine/problemi)
+- Le opzioni devono portare a raccomandare il NUOVO PRODOTTO come soluzione
+- I risultati devono spiegare perché il NUOVO PRODOTTO è perfetto per l'utente
+- Social proof, urgenza, trust badges devono essere per il NUOVO BRAND
+- CTA devono linkare al NUOVO PRODOTTO con il testo CTA fornito
+- Usa il TONO DI VOCE del nuovo brand (dal branding fornito)
+- Usa i COLORI DEL BRAND del nuovo prodotto per accenti e CTA (ma mantieni il layout/stile dell'originale)
+
+=== STRUTTURA FILE ===
+<!DOCTYPE html> → <head> con <style> → <body> con markup → <script> con logica → </html>
+
+=== CSS ===
+- Colori dal visual blueprint per lo stile base (sfondo, card, bordi)
+- Colori del BRAND del nuovo prodotto per CTA, accenti, progress bar
+- Replica spacing, border-radius, shadows, animazioni dell'originale
+- Mobile-first responsive
+- Animazioni: fadeIn tra step, hover opzioni, selezione, progress smooth
+
+=== HTML ===
+- Ogni step: <div class="quiz-step" data-step="N" data-step-type="tipo">
+- Solo il primo step visibile (.active)
+- Opzioni: <div class="quiz-option" data-option="val" data-category="cat_id">
+- Progress bar con label
+- TUTTI gli step presenti (intro, domande, info, loading, risultato)
+
+=== JAVASCRIPT ===
+- Un solo <script> prima di </body>
+- Navigazione step: mostra uno alla volta con transizioni
+- Click opzione → .selected → salva categoria → auto-avanza dopo 700ms
+- Progress bar: aggiorna percentuale
+- Scoring: oggetto risposte, conta categorie, trova vincitore
+- Loading: messaggi progressivi (adattati al nuovo prodotto)
+- Risultato: mostra profilo vincente, CTA con URL prodotto
+- Back button, scroll to top
+- ZERO dipendenze esterne
+
+OUTPUT: SOLO codice HTML da <!DOCTYPE html> a </html>.
+Inizia con <!DOCTYPE html>. Zero spiegazioni, zero markdown.`;
+
+  const userContent: Anthropic.Messages.ContentBlockParam[] = [];
+
+  // Send up to 3 screenshots as visual reference
+  const screenshotSample = screenshots.length > 3
+    ? [screenshots[0], screenshots[Math.floor(screenshots.length / 2)], screenshots[screenshots.length - 1]]
+    : screenshots;
+  for (const ss of screenshotSample) {
+    userContent.push({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: ss },
+    });
+  }
+
+  userContent.push({
+    type: 'text',
+    text: buildUnifiedPrompt(visualBlueprint, quizBlueprint, branding, product, extraInstructions || ''),
+  });
+
+  const stream = await anthropic.messages.stream({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 64000,
+    temperature: 0.4,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userContent }],
+  });
+
+  let accumulated = '';
+  for await (const event of stream) {
+    if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+      accumulated += event.delta.text;
+      controller.enqueue(sseEncode({ text: event.delta.text }));
+    }
+  }
+
+  const finalMessage = await stream.finalMessage();
+  totalInputTokens += finalMessage.usage.input_tokens;
+  totalOutputTokens += finalMessage.usage.output_tokens;
+
+  // Clean up any markdown wrapping
+  let finalHtml = accumulated.trim();
+  finalHtml = finalHtml.replace(/^```html?\s*/i, '').replace(/```\s*$/i, '').trim();
+
+  controller.enqueue(sseEncode({ phase: 'assembling', message: 'Completato!' }));
+
+  // ── Save to Supabase if we have a job ──
+  try {
+    await supabase
+      .from('multiagent_jobs')
+      .insert({
+        entry_url: entryUrl,
+        funnel_name: funnelName || '',
+        params: {
+          product,
+          funnelSteps,
+          funnelMeta,
+          extraInstructions,
+          pipeline: 'v2_visual_replication',
+        },
+        status: 'completed',
+        current_phase: 'completed',
+        result_html: finalHtml,
+        master_spec: { visual_blueprint: visualBlueprint, quiz_blueprint: quizBlueprint },
+        branding,
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
+      });
+  } catch { /* non-blocking */ }
+
+  return { totalInputTokens, totalOutputTokens, visualBlueprint, quizBlueprint };
 }
 
 // =====================================================
@@ -707,11 +748,7 @@ function sseEncode(data: Record<string, unknown>): Uint8Array {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as RequestBody;
-    const {
-      entryUrl,
-      product,
-      mode,
-    } = body;
+    const { entryUrl, product } = body;
 
     if (!entryUrl || !product) {
       return new Response(
@@ -730,169 +767,30 @@ export async function POST(request: NextRequest) {
       return new Response(JSON.stringify({ error: 'GEMINI_API_KEY non configurata' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
     }
 
-    // ── BACKGROUND MODE (default) ──
-    // Returns job ID immediately, processes in background via waitUntil.
-    // Client polls GET /api/swipe-quiz/multiagent-generate/[jobId] for status.
-    if (mode !== 'streaming') {
-      const jobId = await createJob(body);
-
-      waitUntil(runBackgroundPipeline(jobId, body));
-
-      return new Response(
-        JSON.stringify({
-          jobId,
-          status: 'pending',
-          message: 'Job creato. Pipeline in esecuzione in background.',
-          pollUrl: `/api/swipe-quiz/multiagent-generate/${jobId}`,
-        }),
-        {
-          status: 202,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      );
-    }
-
-    // ── STREAMING MODE (legacy SSE) ──
-    // Kept for backward compatibility. Streams progress + HTML via SSE.
-    const funnelName = body.funnelName;
-    const funnelSteps = body.funnelSteps;
-    const funnelMeta = body.funnelMeta;
-    const extraInstructions = body.extraInstructions;
-
+    // ── STREAMING MODE (SSE) — V2 Visual Replication Pipeline ──
     const readable = new ReadableStream<Uint8Array>({
       async start(controller) {
-        let totalInputTokens = 0;
-        let totalOutputTokens = 0;
-
         try {
-          controller.enqueue(sseEncode({ phase: 'cloning_html', message: 'Clonazione HTML originale con Playwright...' }));
-
-          const { clonedData, textNodes, cssTokens } = await cloneQuizHtml(entryUrl);
-
-          controller.enqueue(sseEncode({
-            phase: 'cloning_done',
-            htmlSize: clonedData.renderedSize,
-            textNodesCount: textNodes.length,
-            cssCount: clonedData.cssCount,
-            hasCssTokens: !!cssTokens,
-          }));
-
-          controller.enqueue(sseEncode({ phase: 'fetching_screenshots', message: 'Recupero screenshot per-step...' }));
-
-          const { screenshots, stepsInfo } = await fetchScreenshotsAndSteps(entryUrl, funnelName, funnelSteps);
-
-          controller.enqueue(sseEncode({
-            phase: 'screenshots_ready',
-            screenshotsCount: screenshots.length,
-            stepsCount: stepsInfo.length,
-          }));
-
-          controller.enqueue(sseEncode({ phase: 'agents_start', message: '4 agenti Gemini in parallelo...' }));
-
-          const extractedTexts = textNodes.map(t => ({
-            index: t.index,
-            text: t.originalText,
-            tag: t.tagName,
-            context: t.classes.split(' ')[0] || '',
-          }));
-
-          let masterSpec: MasterSpec;
-
-          if (screenshots.length > 0) {
-            const agentResult = await runMultiAgentAnalysis({
-              screenshots,
-              cssTokens,
-              stepsInfo,
-              extractedTexts,
-              geminiApiKey: geminiKey,
-              onProgress: (phase, message) => {
-                controller.enqueue(sseEncode({ phase, message }));
-              },
-            });
-
-            masterSpec = agentResult.masterSpec;
-            masterSpec.metadata.original_url = entryUrl;
-            masterSpec.metadata.funnel_name = funnelName;
-          } else {
-            controller.enqueue(sseEncode({ phase: 'agents_skip', message: 'Nessuno screenshot disponibile — analisi basata su metadati' }));
-            masterSpec = buildFallbackMasterSpec(entryUrl, funnelName, stepsInfo);
-          }
-
-          controller.enqueue(sseEncode({
-            phase: 'agents_done',
-            confidence: masterSpec.synthesis_notes.confidence_score,
-            warnings: masterSpec.synthesis_notes.warnings.length,
-          }));
-
-          controller.enqueue(sseEncode({ phase: 'generating_branding', message: 'Generazione branding per il tuo prodotto...' }));
-
-          let branding = await generateBrandingForProduct(entryUrl, funnelName, product, funnelMeta);
-          if (!branding) {
-            branding = buildFallbackBranding(product, funnelName, funnelSteps);
-          }
-
-          controller.enqueue(sseEncode({
-            phase: 'branding_done',
-            hasBranding: !!branding,
-            brandingSteps: branding.funnelSteps.length,
-          }));
-
-          controller.enqueue(sseEncode({ phase: 'transforming_html', message: 'Claude: trasformazione chirurgica dell\'HTML...' }));
-
-          const anthropic = new Anthropic({ apiKey: anthropicKey });
-
-          const userPrompt = buildTransformPrompt(
-            clonedData.html,
-            masterSpec,
-            branding,
-            product,
-            extraInstructions || '',
-          );
-
-          const userContent: Anthropic.Messages.ContentBlockParam[] = [
-            { type: 'text', text: userPrompt },
-          ];
-
-          if (screenshots.length > 0) {
-            userContent.unshift({
-              type: 'image',
-              source: { type: 'base64', media_type: 'image/png', data: screenshots[0] },
-            });
-          }
-
-          const stream = await anthropic.messages.stream({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 64000,
-            temperature: 0.3,
-            system: CLAUDE_TRANSFORM_SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: userContent }],
-          });
-
-          for await (const event of stream) {
-            if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-              controller.enqueue(sseEncode({ text: event.delta.text }));
-            }
-          }
-
-          const finalMessage = await stream.finalMessage();
-          totalInputTokens += finalMessage.usage.input_tokens;
-          totalOutputTokens += finalMessage.usage.output_tokens;
+          const result = await runV2Pipeline(body, controller);
 
           controller.enqueue(sseEncode({
             done: true,
-            mode: 'multiagent_transform',
-            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens },
-            masterSpecSummary: {
-              confidence: masterSpec.synthesis_notes.confidence_score,
-              warnings: masterSpec.synthesis_notes.warnings,
-              agentsUsed: masterSpec.metadata.agents_used,
+            mode: 'v2_visual_replication',
+            usage: {
+              input_tokens: result.totalInputTokens,
+              output_tokens: result.totalOutputTokens,
+            },
+            blueprintSummary: {
+              visualScreens: result.visualBlueprint.ux_flow?.total_screens || 0,
+              quizScreens: result.quizBlueprint.quiz_content?.screens?.length || 0,
+              scoringType: result.quizBlueprint.scoring_system?.type || 'unknown',
             },
           }));
 
           controller.close();
         } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : 'Errore durante la generazione multiagent';
-          console.error('[multiagent-generate] SSE Error:', errorMsg);
+          const errorMsg = err instanceof Error ? err.message : 'Errore durante la generazione V2';
+          console.error('[multiagent-v2] Error:', errorMsg);
           controller.enqueue(sseEncode({ error: errorMsg }));
           controller.close();
         }
@@ -907,7 +805,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('[multiagent-generate] Error:', error);
+    console.error('[multiagent-v2] Error:', error);
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Errore interno' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } },

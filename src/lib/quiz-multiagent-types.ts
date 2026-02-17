@@ -415,11 +415,217 @@ export interface TransformPayload {
 }
 
 // =====================================================
+// V2 PIPELINE TYPES — Visual Replication (no HTML cloning)
+// =====================================================
+
+export interface TypographySpec {
+  size: string;
+  weight: string;
+  line_height: string;
+  letter_spacing: string;
+  text_transform?: string;
+}
+
+export interface VisualBlueprint {
+  design_system: {
+    colors: {
+      primary: string;
+      secondary: string;
+      accent: string;
+      background_page: string;
+      background_card: string;
+      text_heading: string;
+      text_body: string;
+      text_muted: string;
+      button_primary_bg: string;
+      button_primary_text: string;
+      button_primary_hover: string;
+      border_default: string;
+      border_selected: string;
+      progress_fill: string;
+      progress_track: string;
+      success: string;
+      error: string;
+      option_selected_bg: string;
+      option_hover_bg: string;
+    };
+    gradients: Array<{ css: string; applied_to: string }>;
+    typography: {
+      font_family_primary: string;
+      font_family_secondary: string;
+      heading_large: TypographySpec;
+      heading_medium: TypographySpec;
+      heading_small: TypographySpec;
+      body: TypographySpec;
+      body_small: TypographySpec;
+      caption: TypographySpec;
+      button: TypographySpec;
+      option: TypographySpec;
+    };
+    spacing: {
+      page_padding: string;
+      section_gap: string;
+      card_padding: string;
+      between_options: string;
+      button_padding: string;
+      heading_margin_bottom: string;
+      progress_bar_margin: string;
+    };
+    dimensions: {
+      container_max_width: string;
+      button_height: string;
+      button_border_radius: string;
+      card_border_radius: string;
+      progress_bar_height: string;
+      progress_bar_border_radius: string;
+      input_height: string;
+      input_border_radius: string;
+    };
+    shadows: {
+      card_default: string;
+      card_hover: string;
+      card_selected: string;
+      button: string;
+      button_hover: string;
+    };
+    animations: {
+      step_transition: { type: string; duration_ms: number; easing: string };
+      option_hover: { transform: string; duration_ms: number };
+      option_select: { type: string; duration_ms: number };
+      progress_fill: { duration_ms: number; easing: string };
+      auto_advance_delay_ms: number;
+    };
+  };
+  layout: {
+    page_background: string;
+    container_style: string;
+    has_header: boolean;
+    header_content: string;
+    option_layout_default: string;
+    option_card_style: string;
+    option_has_icon_or_emoji: boolean;
+    option_icon_position: string;
+    cta_button_width: string;
+    cta_button_position: string;
+  };
+  ux_flow: {
+    total_screens: number;
+    screens: Array<{
+      index: number;
+      type: string;
+      question_type: string;
+      options_count: number;
+      options_layout: string;
+      has_emoji_or_icon: boolean;
+      has_progress_bar: boolean;
+      progress_format: string;
+      has_back_button: boolean;
+      auto_advance: boolean;
+      cta_text: string | null;
+      special_elements: string[];
+    }>;
+    progress_bar: {
+      type: string;
+      position: string;
+      shows_label: boolean;
+      label_format: string;
+    };
+    transitions: {
+      between_steps: { animation: string; duration_ms: number };
+      loading_screen: { exists: boolean; duration_ms: number; style: string };
+    };
+    interaction: {
+      option_click: string;
+      advance_delay_ms: number;
+      back_button_style: string;
+      scroll_to_top_on_advance: boolean;
+    };
+  };
+  visual_mood: {
+    overall_style: string;
+    color_mood: string;
+    illustration_style: string;
+    emoji_usage: string;
+    trust_indicators: string[];
+    unique_design_elements: string[];
+  };
+}
+
+export interface QuizScreenContent {
+  index: number;
+  type: string;
+  headline: string | null;
+  subheadline: string | null;
+  body_text: string | null;
+  question_text: string | null;
+  options: Array<{
+    label: string;
+    subtitle: string | null;
+    emoji_or_icon: string | null;
+    maps_to_category: string;
+  }>;
+  cta_text: string | null;
+  social_proof: string[];
+  trust_elements: string[];
+  urgency_elements: string[];
+  micro_copy: string[];
+  persuasion_techniques: string[];
+}
+
+export interface QuizBlueprint {
+  quiz_content: {
+    language: string;
+    screens: QuizScreenContent[];
+  };
+  scoring_system: {
+    type: string;
+    categories: Array<{ id: string; label: string; description: string }>;
+    result_determination: string;
+    tiebreaker: string;
+  };
+  result_profiles: Array<{
+    id: string;
+    label: string;
+    headline: string;
+    description: string;
+    product_recommendation: string;
+    cta_text: string;
+    urgency: string | null;
+    social_proof: string | null;
+  }>;
+  lead_capture: {
+    exists: boolean;
+    position: string;
+    fields: string[];
+    incentive_text: string;
+    required_or_skippable: string;
+  };
+  loading_screen: {
+    exists: boolean;
+    messages: string[];
+    has_progress_animation: boolean;
+  };
+  copy_style: {
+    formality: string;
+    person: string;
+    emoji_frequency: string;
+    power_words: string[];
+    language: string;
+  };
+  persuasion_flow: {
+    hook_stage: { screens: number[]; techniques: string[] };
+    engagement_stage: { screens: number[]; techniques: string[] };
+    conversion_stage: { screens: number[]; techniques: string[] };
+  };
+}
+
+// =====================================================
 // Pipeline state for the frontend
 // =====================================================
 
 export type MultiAgentPhase =
   | 'idle'
+  // V1 legacy phases
   | 'cloning_html'
   | 'capturing_components'
   | 'agent_visual'
@@ -429,11 +635,20 @@ export type MultiAgentPhase =
   | 'synthesizing'
   | 'generating_branding'
   | 'transforming_html'
+  // V2 new phases
+  | 'fetching_screenshots'
+  | 'analyzing_visual'
+  | 'analyzing_quiz_logic'
+  | 'generating_css'
+  | 'generating_js'
+  | 'generating_html'
+  | 'assembling'
   | 'done'
   | 'error';
 
 export const MULTI_AGENT_PHASE_LABELS: Record<MultiAgentPhase, string> = {
   idle: '',
+  // V1 legacy
   cloning_html: 'Clonazione HTML originale con Playwright...',
   capturing_components: 'Cattura screenshot per-componente...',
   agent_visual: 'Agent 1: Analisi Visual Design pixel-perfect...',
@@ -443,6 +658,14 @@ export const MULTI_AGENT_PHASE_LABELS: Record<MultiAgentPhase, string> = {
   synthesizing: 'Agent 5: Sintesi Master Spec unificata...',
   generating_branding: 'Generazione branding per il tuo prodotto...',
   transforming_html: 'Claude: Trasformazione chirurgica dell\'HTML...',
+  // V2 new
+  fetching_screenshots: 'Recupero screenshot per-step...',
+  analyzing_visual: 'Gemini Vision: Analisi visual blueprint...',
+  analyzing_quiz_logic: 'Gemini Vision: Analisi logica quiz & contenuti...',
+  generating_css: 'Claude: Generazione CSS Design System...',
+  generating_js: 'Claude: Generazione Quiz Engine JS...',
+  generating_html: 'Claude: Generazione markup HTML...',
+  assembling: 'Assemblaggio finale...',
   done: 'Completato!',
   error: 'Errore',
 };

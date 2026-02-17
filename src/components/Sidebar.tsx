@@ -15,6 +15,7 @@ import {
   GitBranch,
   MessageSquare,
   HelpCircle,
+  Wand2,
 } from 'lucide-react';
 
 const menuItems = [
@@ -67,6 +68,11 @@ const menuItems = [
     name: 'My Products',
     href: '/products',
     icon: ShoppingBag,
+  },
+  {
+    name: 'Quiz Creator',
+    href: '/quiz-creator',
+    icon: Wand2,
   },
   {
     name: 'Swipe Quiz',

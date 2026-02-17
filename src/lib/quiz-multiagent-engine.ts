@@ -13,6 +13,8 @@ import type {
   MasterSpec,
   ClonedQuizData,
   TextNode,
+  VisualBlueprint,
+  QuizBlueprint,
 } from './quiz-multiagent-types';
 
 import type { CssTokens } from '@/app/api/swipe-quiz/screenshot/route';
@@ -23,6 +25,8 @@ import {
   AGENT_CRO_PROMPT,
   AGENT_QUIZ_LOGIC_PROMPT,
   AGENT_SYNTHESIS_PROMPT,
+  GEMINI_VISUAL_BLUEPRINT_PROMPT,
+  GEMINI_QUIZ_LOGIC_BLUEPRINT_PROMPT,
 } from './quiz-multiagent-prompts';
 
 // =====================================================
@@ -391,7 +395,101 @@ export async function runMultiAgentAnalysis(input: MultiAgentInput): Promise<Mul
 }
 
 // =====================================================
-// HTML CLONER (uses Playwright)
+// V2 PIPELINE — Visual Replication (2 Gemini calls)
+// =====================================================
+
+export interface VisualBlueprintInput {
+  screenshots: string[];
+  cssTokens: CssTokens | null;
+  geminiApiKey: string;
+  onProgress?: (msg: string) => void;
+}
+
+export async function runVisualBlueprintAnalysis(
+  input: VisualBlueprintInput,
+): Promise<VisualBlueprint> {
+  const { screenshots, cssTokens, geminiApiKey, onProgress } = input;
+  onProgress?.(`Gemini Vision: analisi visual blueprint (${screenshots.length} screenshot)...`);
+
+  const parts: GeminiPart[] = [];
+
+  // For visual design, send a representative sample: first 3 + last 2 + evenly spaced middle
+  // This captures intro design, question variations, and result/checkout pages
+  let visualScreenshots = screenshots;
+  if (screenshots.length > 8) {
+    const first3 = screenshots.slice(0, 3);
+    const last2 = screenshots.slice(-2);
+    const middle = screenshots.slice(3, -2);
+    const step = Math.max(1, Math.floor(middle.length / 3));
+    const middlePicks = middle.filter((_, i) => i % step === 0).slice(0, 3);
+    visualScreenshots = [...first3, ...middlePicks, ...last2];
+  }
+
+  for (const ss of visualScreenshots) {
+    parts.push({ inline_data: { mime_type: 'image/png', data: ss } });
+  }
+
+  const prompt = GEMINI_VISUAL_BLUEPRINT_PROMPT.replace('{{CSS_TOKENS}}', formatCssTokens(cssTokens));
+  parts.push({ text: prompt });
+
+  onProgress?.(`Analisi design da ${visualScreenshots.length} screenshot selezionati...`);
+  const rawText = await callGeminiVision(parts, geminiApiKey, {
+    temperature: 0.15,
+    maxTokens: 12000,
+  });
+  const parsed = parseJsonSafe(rawText);
+
+  onProgress?.('Visual blueprint completato');
+  return parsed as unknown as VisualBlueprint;
+}
+
+export interface QuizBlueprintInput {
+  screenshots: string[];
+  stepsInfo: Array<{ index: number; title: string; type: string; options?: string[] }>;
+  geminiApiKey: string;
+  onProgress?: (msg: string) => void;
+}
+
+export async function runQuizLogicBlueprintAnalysis(
+  input: QuizBlueprintInput,
+): Promise<QuizBlueprint> {
+  const { screenshots, stepsInfo, geminiApiKey, onProgress } = input;
+  onProgress?.(`Gemini Vision: analisi logica quiz e contenuti (${screenshots.length} screenshot)...`);
+
+  const parts: GeminiPart[] = [];
+
+  // Send ALL screenshots — Gemini needs to see every step to extract questions/options/content
+  // Gemini 2.5 Flash supports up to 3600 images, so even 30+ is fine
+  for (const ss of screenshots) {
+    parts.push({ inline_data: { mime_type: 'image/png', data: ss } });
+  }
+
+  // Build steps info string
+  let stepsInfoStr = '';
+  for (const step of stepsInfo) {
+    stepsInfoStr += `Step ${step.index}: "${step.title}" [${step.type}]`;
+    if (step.options && step.options.length > 0) {
+      stepsInfoStr += ` — Options: ${step.options.join(', ')}`;
+    }
+    stepsInfoStr += '\n';
+  }
+
+  const prompt = GEMINI_QUIZ_LOGIC_BLUEPRINT_PROMPT.replace('{{STEPS_INFO}}', stepsInfoStr || 'No crawl data available — analyze screenshots only.');
+  parts.push({ text: prompt });
+
+  onProgress?.(`Analisi contenuti da ${screenshots.length} screenshot...`);
+  const rawText = await callGeminiVision(parts, geminiApiKey, {
+    temperature: 0.2,
+    maxTokens: 32000,
+  });
+  const parsed = parseJsonSafe(rawText);
+
+  onProgress?.('Quiz logic blueprint completato');
+  return parsed as unknown as QuizBlueprint;
+}
+
+// =====================================================
+// HTML CLONER (uses Playwright) — kept for backward compatibility
 // =====================================================
 
 export async function cloneQuizHtml(url: string): Promise<{

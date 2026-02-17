@@ -188,10 +188,15 @@ export default function SwipeQuizPage() {
   const [pipelinePhase, setPipelinePhase] = useState<PipelinePhase>('idle');
   const [useChunkedMode, setUseChunkedMode] = useState(true);
 
-  // Multi-Agent mode (new: clone + 4 Gemini agents + Claude transform)
+  // Multi-Agent mode
   const [useMultiAgentMode, setUseMultiAgentMode] = useState(true);
   const [multiAgentPhase, setMultiAgentPhase] = useState('');
   const [multiAgentConfidence, setMultiAgentConfidence] = useState<number | null>(null);
+
+  // Debug Gemini output
+  const [debugGeminiData, setDebugGeminiData] = useState<Record<string, unknown> | null>(null);
+  const [debugGeminiLoading, setDebugGeminiLoading] = useState(false);
+  const [showDebugModal, setShowDebugModal] = useState(false);
 
   // Filter quiz-type funnel pages from the store
   const quizFunnelPages = useMemo(
@@ -714,7 +719,7 @@ export default function SwipeQuizPage() {
     });
   };
 
-  // ── MULTI-AGENT MODE: Clone + 4 Gemini Agents + Claude Transform ──
+  // ── MULTI-AGENT MODE V2: Screenshots → Gemini Analysis → Claude Generation ──
   const generateMultiAgent = async (funnel: AffiliateSavedFunnel) => {
     if (!selectedProduct || isGenerating) return;
 
@@ -728,9 +733,9 @@ export default function SwipeQuizPage() {
     setError(null);
     setStreamProgress(0);
     setActiveTab('preview');
-    setMultiAgentPhase('cloning_html');
+    setMultiAgentPhase('fetching_screenshots');
     setMultiAgentConfidence(null);
-    setGenerationPhase('Clonazione HTML originale...');
+    setGenerationPhase('Recupero screenshot per-step...');
     setPipelinePhase('idle');
 
     const steps = Array.isArray(funnel.steps)
@@ -802,7 +807,6 @@ export default function SwipeQuizPage() {
 
             if (data.done) {
               setUsage(data.usage || null);
-              setMultiAgentConfidence(data.masterSpecSummary?.confidence ?? null);
               setGenerationPhase('');
               setMultiAgentPhase('done');
               break;
@@ -813,33 +817,28 @@ export default function SwipeQuizPage() {
               setMultiAgentPhase(data.phase);
               if (data.message) setGenerationPhase(data.message);
 
-              // Update progress based on phase
+              // V2 progress map
               const phaseProgressMap: Record<string, number> = {
-                cloning_html: 5,
-                cloning_done: 10,
-                fetching_screenshots: 12,
+                fetching_screenshots: 5,
                 screenshots_ready: 15,
-                agents_start: 18,
-                parallel_agents: 20,
-                agent_visual: 25,
-                agent_ux_flow: 30,
-                agent_cro: 35,
-                agent_quiz_logic: 40,
-                agents_done: 55,
-                synthesizing: 58,
-                generating_branding: 62,
-                branding_done: 68,
-                transforming_html: 70,
+                analyzing_visual: 20,
+                analyzing_quiz_logic: 25,
+                analysis_done: 35,
+                generating_branding: 40,
+                branding_done: 48,
+                generating_html: 50,
+                assembling: 95,
               };
               const progress = phaseProgressMap[data.phase];
               if (progress) setStreamProgress(progress);
+              continue;
             }
 
-            // HTML text streaming from Claude transform
+            // HTML text streaming from Claude (unified output)
             if (data.text) {
               accumulated += data.text;
               setGeneratedCode(accumulated);
-              setStreamProgress(prev => Math.min(prev + 0.3, 95));
+              setStreamProgress(prev => Math.min(prev + 0.3, 94));
 
               if (
                 accumulated.includes('</style>') ||
@@ -861,7 +860,7 @@ export default function SwipeQuizPage() {
       }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return;
-      setError(err instanceof Error ? err.message : 'Errore durante il pipeline multi-agente');
+      setError(err instanceof Error ? err.message : 'Errore durante il pipeline Visual Replication');
     } finally {
       setIsGenerating(false);
       setGenerationPhase('');
@@ -908,6 +907,35 @@ export default function SwipeQuizPage() {
     setMultiAgentConfidence(null);
     if (iframeRef.current) {
       iframeRef.current.srcdoc = '';
+    }
+  };
+
+  // Debug: run only Gemini analysis and show raw output
+  const debugGeminiAnalysis = async (funnel: AffiliateSavedFunnel) => {
+    setDebugGeminiLoading(true);
+    setDebugGeminiData(null);
+    setShowDebugModal(true);
+
+    const steps = Array.isArray(funnel.steps)
+      ? (funnel.steps as unknown as AffiliateFunnelStep[])
+      : [];
+
+    try {
+      const res = await fetch('/api/swipe-quiz/debug-gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entryUrl: funnel.entry_url,
+          funnelName: funnel.funnel_name,
+          funnelSteps: steps,
+        }),
+      });
+      const data = await res.json();
+      setDebugGeminiData(data);
+    } catch (err) {
+      setDebugGeminiData({ error: err instanceof Error ? err.message : 'Errore' });
+    } finally {
+      setDebugGeminiLoading(false);
     }
   };
 
@@ -1129,9 +1157,9 @@ export default function SwipeQuizPage() {
                 />
                 <span className="text-xs font-medium text-gray-700 flex items-center gap-1">
                   <Layers className="w-3.5 h-3.5 text-indigo-500" />
-                  Multi-Agent (Clone + Trasforma)
+                  Visual Replication (Gemini + Claude)
                 </span>
-                <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">Fedele</span>
+                <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">V2</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -1164,7 +1192,7 @@ export default function SwipeQuizPage() {
               ) : useMultiAgentMode ? (
                 <>
                   <Layers className="w-4 h-4" />
-                  Clone &amp; Trasforma Quiz (Multi-Agent)
+                  Visual Replication Quiz (Gemini + Claude)
                 </>
               ) : (
                 <>
@@ -1175,6 +1203,81 @@ export default function SwipeQuizPage() {
                 </>
               )}
             </button>
+
+            {/* Debug Gemini button */}
+            <button
+              onClick={() => debugGeminiAnalysis(selectedFunnel)}
+              disabled={debugGeminiLoading || isGenerating}
+              className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+            >
+              {debugGeminiLoading ? (
+                <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Analisi Gemini in corso...</>
+              ) : (
+                <><Eye className="w-3.5 h-3.5" /> Debug: Vedi output Gemini (Visual + Quiz Logic)</>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Debug Gemini Modal */}
+        {showDebugModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+                <div className="flex items-center gap-2">
+                  <Eye className="w-5 h-5 text-purple-500" />
+                  <h3 className="font-semibold text-gray-900">Debug Output Gemini</h3>
+                  {debugGeminiData && typeof debugGeminiData.screenshotsCount === 'number' && (
+                    <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
+                      {debugGeminiData.screenshotsCount} screenshots analizzati
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowDebugModal(false)}
+                  className="p-1.5 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto p-5">
+                {debugGeminiLoading ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+                    <Loader2 className="w-8 h-8 animate-spin mb-3" />
+                    <p className="text-sm">Cattura screenshot + Analisi Gemini Vision in corso...</p>
+                    <p className="text-xs mt-1 text-gray-300">Questo puo' richiedere 1-3 minuti</p>
+                  </div>
+                ) : debugGeminiData?.error ? (
+                  <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                    <strong>Errore:</strong> {String(debugGeminiData.error)}
+                  </div>
+                ) : debugGeminiData ? (
+                  <div className="space-y-6">
+                    {/* Visual Blueprint */}
+                    <div>
+                      <h4 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                        <Palette className="w-4 h-4 text-indigo-500" />
+                        Visual Blueprint (Design System)
+                      </h4>
+                      <pre className="bg-gray-950 text-green-400 text-xs font-mono p-4 rounded-lg overflow-auto max-h-[400px] leading-relaxed">
+                        {JSON.stringify(debugGeminiData.visualBlueprint, null, 2)}
+                      </pre>
+                    </div>
+
+                    {/* Quiz Logic Blueprint */}
+                    <div>
+                      <h4 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                        <HelpCircle className="w-4 h-4 text-emerald-500" />
+                        Quiz Logic Blueprint (Contenuti + Scoring)
+                      </h4>
+                      <pre className="bg-gray-950 text-cyan-400 text-xs font-mono p-4 rounded-lg overflow-auto max-h-[400px] leading-relaxed">
+                        {JSON.stringify(debugGeminiData.quizBlueprint, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
         )}
 
@@ -1624,44 +1727,40 @@ export default function SwipeQuizPage() {
         {/* Pipeline Progress */}
         {isGenerating && (
           <div className="mb-4">
-            {/* Multi-Agent phase indicator */}
+            {/* Multi-Agent V2 phase indicator */}
             {multiAgentPhase && multiAgentPhase !== 'idle' && multiAgentPhase !== 'done' && (
               <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
                 {([
-                  { key: 'cloning_html', label: 'Clone HTML' },
-                  { key: 'agent_visual', label: 'Visual AI' },
-                  { key: 'agent_ux_flow', label: 'UX Flow AI' },
-                  { key: 'agent_cro', label: 'CRO AI' },
-                  { key: 'agent_quiz_logic', label: 'Logic AI' },
-                  { key: 'synthesizing', label: 'Sintesi' },
+                  { key: 'fetching_screenshots', label: 'Screenshots' },
+                  { key: 'analyzing_visual', label: 'Visual AI' },
+                  { key: 'analyzing_quiz_logic', label: 'Quiz Logic AI' },
                   { key: 'generating_branding', label: 'Branding' },
-                  { key: 'transforming_html', label: 'Trasforma' },
+                  { key: 'generating_html', label: 'Genera Quiz' },
                 ] as const).map((item, idx, arr) => {
-                  const allPhases = arr.map(a => a.key);
-                  const currentIdx = allPhases.indexOf(multiAgentPhase as typeof allPhases[number]);
-                  const thisIdx = idx;
+                  const phaseOrder = [
+                    'fetching_screenshots', 'screenshots_ready',
+                    'analyzing_visual', 'analyzing_quiz_logic', 'analysis_done',
+                    'generating_branding', 'branding_done',
+                    'generating_html', 'assembling',
+                  ];
+                  const currentPhaseIdx = phaseOrder.indexOf(multiAgentPhase);
+                  const itemPhaseIdx = phaseOrder.indexOf(item.key);
+                  const isPast = currentPhaseIdx > itemPhaseIdx && itemPhaseIdx >= 0;
+                  const isParallel = (item.key === 'analyzing_visual' || item.key === 'analyzing_quiz_logic') &&
+                    (multiAgentPhase === 'analyzing_visual' || multiAgentPhase === 'analyzing_quiz_logic');
                   const isCurrent = multiAgentPhase === item.key ||
-                    (multiAgentPhase === 'parallel_agents' && thisIdx >= 1 && thisIdx <= 4) ||
-                    (multiAgentPhase.startsWith('agent_') && item.key.startsWith('agent_') && multiAgentPhase === item.key);
-                  const isPast = currentIdx > thisIdx ||
-                    (multiAgentPhase === 'agents_done' && thisIdx <= 4) ||
-                    (multiAgentPhase === 'synthesizing' && thisIdx <= 4) ||
-                    (multiAgentPhase === 'generating_branding' && thisIdx <= 5) ||
-                    (multiAgentPhase === 'branding_done' && thisIdx <= 6) ||
-                    (multiAgentPhase === 'transforming_html' && thisIdx <= 6);
-                  const isParallel = thisIdx >= 1 && thisIdx <= 4 &&
-                    (multiAgentPhase === 'parallel_agents' || multiAgentPhase === 'agents_start' || multiAgentPhase.startsWith('agent_'));
+                    (item.key === 'analyzing_visual' && multiAgentPhase === 'analyzing_quiz_logic') ||
+                    (item.key === 'analyzing_quiz_logic' && multiAgentPhase === 'analyzing_visual') ||
+                    (item.key === 'generating_html' && multiAgentPhase === 'assembling');
 
                   return (
                     <div key={item.key} className="flex items-center gap-1.5">
                       <div className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium transition-all whitespace-nowrap ${
-                        isCurrent
-                          ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300'
-                          : isPast
-                            ? 'bg-green-50 text-green-600'
-                            : isParallel
-                              ? 'bg-amber-50 text-amber-600 ring-1 ring-amber-200'
-                              : 'bg-gray-100 text-gray-400'
+                        isPast
+                          ? 'bg-green-50 text-green-600'
+                          : isCurrent || isParallel
+                            ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300'
+                            : 'bg-gray-100 text-gray-400'
                       }`}>
                         {isPast && <Check className="w-3 h-3" />}
                         {(isCurrent || isParallel) && !isPast && <Loader2 className="w-3 h-3 animate-spin" />}
@@ -1872,7 +1971,7 @@ export default function SwipeQuizPage() {
         {usage && (
           <div className="mt-4 flex items-center justify-between text-xs text-gray-400">
             <span>
-              Generato con Claude Sonnet 4{multiAgentPhase === 'done' ? ' (Multi-Agent Clone+Transform)' : pipelinePhase === 'done' ? ' (Pipeline HQ)' : ''} &middot; {generatedCode.length.toLocaleString()}{' '}
+              Generato con Claude Sonnet 4{multiAgentPhase === 'done' ? ' (Visual Replication V2)' : pipelinePhase === 'done' ? ' (Pipeline HQ)' : ''} &middot; {generatedCode.length.toLocaleString()}{' '}
               caratteri
             </span>
             <span>
