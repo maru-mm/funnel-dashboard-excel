@@ -37,6 +37,8 @@ import {
   FolderOpen,
   Search,
   Link,
+  Clock,
+  Settings2,
 } from 'lucide-react';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
@@ -534,6 +536,8 @@ function SwipedAnalysisDisplay({ swiped, original }: { swiped: AnalysisResult; o
 
 export default function QuizCreatorPage() {
   const [url, setUrl] = useState('');
+  const [screenshotDelay, setScreenshotDelay] = useState<number>(0);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -619,7 +623,10 @@ export default function QuizCreatorPage() {
       const res = await fetch('/api/quiz-creator/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({
+          url: url.trim(),
+          ...(screenshotDelay > 0 && { screenshotDelay }),
+        }),
       });
       const data = (await res.json()) as ApiResponse;
       if (!res.ok || !data.success) {
@@ -888,9 +895,53 @@ export default function QuizCreatorPage() {
               <span>{loading ? 'Analizzando...' : 'Analizza'}</span>
             </button>
           </div>
-          <p className="text-xs text-gray-400 mt-3">
-            Gemini Vision AI analizza lo screenshot, poi Claude genera HTML identico alla pagina.
-          </p>
+          <div className="flex items-center justify-between mt-3">
+            <p className="text-xs text-gray-400">
+              Gemini Vision AI analizza lo screenshot, poi Claude genera HTML identico alla pagina.
+            </p>
+            <button
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-indigo-600 transition-colors"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              <span>Opzioni</span>
+              {showAdvanced ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+          </div>
+
+          {/* Advanced Options */}
+          {showAdvanced && (
+            <div className="mt-4 p-4 bg-gray-50 rounded-xl border border-gray-200 space-y-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Settings2 className="w-4 h-4 text-gray-500" />
+                <span className="text-sm font-semibold text-gray-700">Opzioni Screenshot</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2.5">
+                  <Clock className="w-4 h-4 text-indigo-500" />
+                  <label className="text-sm text-gray-700 font-medium">Delay Screenshot</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    max={120}
+                    step={1}
+                    value={screenshotDelay}
+                    onChange={(e) => setScreenshotDelay(Math.max(0, Math.min(120, Number(e.target.value) || 0)))}
+                    className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                    disabled={loading || isGenerating || isSwiping}
+                  />
+                  <span className="text-sm text-gray-500">secondi</span>
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 ml-6">
+                {screenshotDelay > 0
+                  ? `Lo screenshot verrà scattato dopo ${screenshotDelay} secondi dal caricamento della pagina. Utile per quiz/funnel con animazioni o caricamento dinamico.`
+                  : 'Default: ~5.5 secondi (4s attesa rendering + networkidle + 1.5s). Imposta un valore > 0 per un delay personalizzato.'}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* ═══ SAVED FUNNELS SECTION ═══ */}

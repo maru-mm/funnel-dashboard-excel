@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const AGENTIC_API_BASE = process.env.AGENTIC_API_URL || 'http://localhost:8000';
+function getAgenticApiBase() {
+  return process.env.AGENTIC_API_URL || 'http://localhost:8000';
+}
 
 export type PromptType = 'visual_analysis' | 'conversion_optimization' | 'ux_audit' | 'brand_analysis' | 'custom';
 
 export async function POST(request: NextRequest) {
+  const AGENTIC_API_BASE = getAgenticApiBase();
   try {
     const body = await request.json();
     

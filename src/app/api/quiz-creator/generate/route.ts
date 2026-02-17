@@ -157,7 +157,8 @@ REGOLE CRITICHE:
 - Mobile responsive
 - Il file deve essere completamente autocontenuto
 - La STRUTTURA deve seguire lo screenshot (layout, sezioni, disposizione)
-- I CONTENUTI (testi, colori, CTA, brand name) devono venire dall'analisi swipata`;
+- I CONTENUTI (testi, colori, CTA, brand name) devono venire dall'analisi swipata
+- TUTTE le immagini devono essere PLACEHOLDER autocontenuti (div con gradiente + icona SVG inline + testo descrittivo). NON usare URL di immagini esterne.`;
 
   const swipedColors = swipedAnalysis.color_palette as Record<string, string> | undefined;
   const swipedBrand = swipedAnalysis.brand_identity as Record<string, string> | undefined;
@@ -204,13 +205,22 @@ ISTRUZIONI:
 
 5. ELEMENTI VISIVI: Replica lo stile dei bottoni, card e elementi come descritto nell'analisi swipata.
 
-6. INTERATTIVITÀ: Se la pagina originale ha elementi interattivi, implementali con JavaScript vanilla funzionante.
+6. IMMAGINI → PLACEHOLDER: NON usare le immagini originali dello screenshot. Poiché è un nuovo brand, TUTTE le immagini devono essere sostituite con placeholder eleganti:
+   - Usa div con sfondo colorato (dai colori del brand swipato) con un'icona SVG inline (es. icona immagine, prodotto, persona) e un testo come "Immagine Prodotto", "Hero Image", "Foto Team", ecc.
+   - Mantieni le STESSE dimensioni e proporzioni delle immagini originali nello screenshot
+   - Stile placeholder: bordi arrotondati, sfondo gradiente leggero usando i colori del brand, icona centrata, testo sotto l'icona
+   - Per avatar/foto profilo: usa cerchi con iniziali del brand o icona utente
+   - Per hero images: usa div con gradiente e testo descrittivo
+   - NON usare URL esterni (no placeholder.com, no picsum, no unsplash) - tutto deve essere autocontenuto
+
+7. INTERATTIVITÀ: Se la pagina originale ha elementi interattivi, implementali con JavaScript vanilla funzionante.
 
 REQUISITI TECNICI:
 - File HTML singolo autocontenuto con <style> e <script> inline
 - Font da Google Fonts se specificati
 - Mobile responsive
 - Layout fedele allo screenshot, branding dall'analisi swipata
+- ZERO riferimenti a URL di immagini esterne - tutto autocontenuto con placeholder SVG/CSS
 
 Genera SOLO il codice HTML completo. Nient'altro.`;
 
@@ -245,11 +255,13 @@ function buildSwipeReviewMessages(
 Il tuo compito è verificare che il codice HTML generato:
 1. Abbia la STESSA STRUTTURA/LAYOUT dello screenshot originale
 2. Usi i COLORI, TESTI e BRANDING dall'analisi swipata (NON quelli dell'originale)
+3. Le immagini siano PLACEHOLDER autocontenuti (NON URL esterni)
 
 REGOLE:
 - Se il codice è corretto, restituiscilo ESATTAMENTE com'è
 - Se i colori NON corrispondono all'analisi swipata, CORREGGI
 - Se i testi/CTA NON corrispondono all'analisi swipata, CORREGGI
+- Se ci sono <img> con URL esterni o immagini dell'originale, SOSTITUISCILE con placeholder autocontenuti (div con gradiente dai colori del brand swipato + icona SVG inline + testo descrittivo). Mantieni stesse dimensioni/proporzioni.
 - Verifica che la struttura segua lo screenshot
 - Verifica che gli elementi interattivi funzionino
 
@@ -279,6 +291,7 @@ CHECKLIST:
 5. Il codice è responsive?
 6. Gli elementi interattivi funzionano?
 7. Non ci sono errori di sintassi?
+8. Le immagini sono TUTTE placeholder autocontenuti (div con gradiente + SVG inline)? Se ci sono <img> con URL esterni, sostituiscile con placeholder eleganti usando i colori del brand swipato.
 
 Restituisci il codice HTML completo corretto.`;
 

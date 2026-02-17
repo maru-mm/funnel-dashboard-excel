@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updateAffiliateBrowserChatByJobId } from '@/lib/supabase-operations';
 
-const API_URL = process.env.AGENTIC_BROWSER_API_URL || 'http://localhost:8000';
+function getApiUrl() {
+  return process.env.AGENTIC_BROWSER_API_URL || 'http://localhost:8000';
+}
 
 const FINISHED_STATUSES = ['completed', 'max_turns', 'blocked', 'error'];
 
 export async function GET(request: NextRequest) {
+  const API_URL = getApiUrl();
   try {
     const jobId = request.nextUrl.searchParams.get('jobId');
 

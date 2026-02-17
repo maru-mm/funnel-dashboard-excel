@@ -6,8 +6,12 @@ import {
   createAffiliateBrowserChat,
 } from '@/lib/supabase-operations';
 
-const API_URL = process.env.AGENTIC_BROWSER_API_URL || 'http://localhost:8000';
-const CRON_SECRET = process.env.CRON_SECRET || '';
+function getApiUrl() {
+  return process.env.AGENTIC_BROWSER_API_URL || 'http://localhost:8000';
+}
+function getCronSecret() {
+  return process.env.CRON_SECRET || '';
+}
 
 /**
  * GET /api/scheduled-jobs/cron
@@ -23,6 +27,9 @@ const CRON_SECRET = process.env.CRON_SECRET || '';
  * Protezione: header Authorization o query param ?secret=...
  */
 export async function GET(request: NextRequest) {
+  const API_URL = getApiUrl();
+  const CRON_SECRET = getCronSecret();
+
   // Security: verify cron secret if configured
   if (CRON_SECRET) {
     const authHeader = request.headers.get('authorization');

@@ -25,7 +25,7 @@ export async function GET() {
     message: geminiKey || anthropicKey ? 'Almeno una chiave Vision disponibile' : 'Nessuna chiave Vision (Gemini/Claude)',
   };
 
-  // 3. Agentic API (Landing Analyzer)
+  // 3. Agentic API (Landing Analyzer) — read at runtime, not module level
   const agenticUrl = process.env.AGENTIC_API_URL ?? 'http://localhost:8000';
   const isLocalhost = /localhost|127\.0\.0\.1/.test(agenticUrl);
   checks.agentic = {

@@ -87,7 +87,10 @@ export async function POST(request: NextRequest) {
   let browser: Browser | null = null;
 
   try {
-    const { url } = (await request.json()) as { url: string };
+    const { url, screenshotDelay } = (await request.json()) as {
+      url: string;
+      screenshotDelay?: number;
+    };
 
     if (!url || typeof url !== 'string') {
       return NextResponse.json(
@@ -136,17 +139,27 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Wait for visual rendering to settle
-    await page.waitForTimeout(4000);
+    // Wait for visual rendering to settle.
+    // If a custom screenshotDelay is provided (in seconds), use that as the total wait time.
+    // Otherwise, use the default strategy: 4s + networkidle attempt + 1.5s.
+    const customDelayMs = screenshotDelay && screenshotDelay > 0
+      ? Math.round(screenshotDelay * 1000)
+      : 0;
 
-    // Try to wait for network to settle (best-effort, don't fail if it doesn't)
-    try {
-      await page.waitForLoadState('networkidle', { timeout: 8_000 });
-    } catch {
-      // Page has continuous network activity - that's fine, we have the DOM
+    if (customDelayMs > 0) {
+      await page.waitForTimeout(customDelayMs);
+    } else {
+      await page.waitForTimeout(4000);
+
+      // Try to wait for network to settle (best-effort, don't fail if it doesn't)
+      try {
+        await page.waitForLoadState('networkidle', { timeout: 8_000 });
+      } catch {
+        // Page has continuous network activity - that's fine, we have the DOM
+      }
+
+      await page.waitForTimeout(1500);
     }
-
-    await page.waitForTimeout(1500);
 
     // Dismiss cookie banners
     try {

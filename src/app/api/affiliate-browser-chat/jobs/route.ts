@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 
-const API_URL = process.env.AGENTIC_BROWSER_API_URL || 'http://localhost:8000';
+function getApiUrl() {
+  return process.env.AGENTIC_BROWSER_API_URL || 'http://localhost:8000';
+}
 
 export async function GET() {
+  const API_URL = getApiUrl();
   try {
     const response = await fetch(`${API_URL}/jobs`);
 

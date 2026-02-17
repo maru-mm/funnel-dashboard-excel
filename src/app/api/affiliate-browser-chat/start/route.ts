@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAffiliateBrowserChat } from '@/lib/supabase-operations';
 
-const API_URL = process.env.AGENTIC_BROWSER_API_URL || 'http://localhost:8000';
+function getApiUrl() {
+  return process.env.AGENTIC_BROWSER_API_URL || 'http://localhost:8000';
+}
 
 export async function POST(request: NextRequest) {
+  const API_URL = getApiUrl();
   try {
     const body = await request.json();
     const { prompt, startUrl, maxTurns = 100 } = body;

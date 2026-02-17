@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
 
-const AGENTIC_API_BASE = process.env.AGENTIC_API_URL || 'http://localhost:8000';
-const IS_LOCALHOST = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(AGENTIC_API_BASE);
+function getAgenticApiBase() {
+  return process.env.AGENTIC_API_URL || 'http://localhost:8000';
+}
 
 export async function GET() {
+  const AGENTIC_API_BASE = getAgenticApiBase();
+  const IS_LOCALHOST = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(AGENTIC_API_BASE);
   const isDeployed = !!(process.env.FLY_APP_NAME || process.env.VERCEL_URL);
   if (IS_LOCALHOST && isDeployed) {
     return NextResponse.json({
