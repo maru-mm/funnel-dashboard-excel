@@ -98,36 +98,45 @@ REGOLE:
 5. NON generare HTML o JavaScript — SOLO CSS puro
 6. NON usare librerie esterne
 7. Genera SOLO il codice CSS, senza spiegazioni, senza markdown, senza backtick, senza tag <style>
-8. Il CSS deve usare i VALORI ESATTI di colori/font/spacing forniti nella design spec`;
+8. Il CSS deve usare i VALORI ESATTI di colori/font/spacing forniti nella design spec
+9. Genera classi specifiche per OGNI tipo di input fornito (multiple_choice, image_select, checkbox, text_input, numeric_input, slider, body_mapping)
+10. Includi classi per: .quiz-result (pagina risultati), .quiz-checkout (pagina offerta), .quiz-info-screen (schermate informative), .quiz-lead-capture (form email)`;
 
 const SYSTEM_PROMPT_CHUNK_JS = `Sei un esperto JavaScript developer specializzato in quiz interattivi.
 Il tuo compito è generare SOLO il JavaScript (contenuto del tag <script>) per un quiz funnel engine.
 
 REGOLE:
 1. Implementa: state machine per navigazione step, tracking risposte, calcolo progress, logica risultati, animazioni tra step
-2. Il quiz deve gestire: intro screen, domande (scelta singola/multipla), schermate informative, lead capture (email), pagina risultati
-3. Usa le classi CSS definite nella design spec (verranno fornite)
-4. Il codice deve essere vanilla JS — NO framework, NO librerie esterne
-5. NON generare HTML o CSS — SOLO JavaScript puro
-6. NON usare document.write
-7. Genera SOLO il codice JavaScript, senza spiegazioni, senza markdown, senza backtick, senza tag <script>
-8. Il JS deve trovare gli elementi nel DOM tramite data-attributes (data-step, data-option, etc.)
-9. Includi animazioni CSS class toggle per transizioni tra step`;
+2. Il quiz deve gestire TUTTI questi tipi di step: intro, quiz_question, info_screen, lead_capture, results, checkout
+3. Per quiz_question: click su opzione seleziona e auto-avanza dopo 300ms
+4. Per info_screen: mostra info + bottone Continue
+5. Per lead_capture: form email con validazione, bottone submit
+6. Per results: mostra risultato personalizzato basato sulle risposte raccolte
+7. Per checkout: mostra offerta con CTA link
+8. Usa le classi CSS definite nella design spec (verranno fornite)
+9. Il codice deve essere vanilla JS — NO framework, NO librerie esterne
+10. NON generare HTML o CSS — SOLO JavaScript puro
+11. NON usare document.write
+12. Genera SOLO il codice JavaScript, senza spiegazioni, senza markdown, senza backtick, senza tag <script>
+13. Il JS deve trovare gli elementi nel DOM tramite data-attributes (data-step, data-step-type, data-option)
+14. Includi animazioni CSS class toggle per transizioni tra step
+15. Includi un bottone back/indietro funzionante per ogni step (tranne il primo)
+16. La progress bar deve mostrare il progresso reale basato sul numero di step completati`;
 
-const SYSTEM_PROMPT_CHUNK_HTML = `Sei un esperto frontend developer che assembla quiz funnel HTML completi.
-Ti vengono forniti CSS e JavaScript già scritti. Il tuo compito è generare il file HTML completo che li integra.
+const SYSTEM_PROMPT_CHUNK_HTML = `Sei un esperto frontend developer che genera il MARKUP HTML per quiz funnel.
+Il CSS e il JavaScript verranno inseriti automaticamente dal server. Tu genera SOLO il markup HTML del body.
 
 REGOLE:
-1. Genera un file HTML completo da <!DOCTYPE html> a </html>
-2. Inserisci il CSS fornito dentro un tag <style> nel <head>
-3. Inserisci il JavaScript fornito dentro un tag <script> prima di </body>
-4. Genera TUTTO il markup HTML per ogni step del quiz (intro, domande, risultato, lead capture se necessario)
-5. Usa data-attributes (data-step="0", data-step="1", etc.) per ogni screen
-6. Usa le classi CSS definite nel CSS fornito
-7. Il quiz deve essere completamente funzionante quando aperto in un iframe
-8. NON usare librerie esterne (no CDN)
-9. Genera SOLO il codice HTML, senza spiegazioni, senza markdown, senza backtick
-10. Inizia con <!DOCTYPE html> e termina con </html>`;
+1. Genera SOLO il contenuto del <body> — NO <!DOCTYPE>, NO <html>, NO <head>, NO <style>, NO <script>
+2. Inizia direttamente con il primo div del quiz (es. <div class="quiz-container">)
+3. Genera TUTTO il markup HTML per ogni step del quiz: intro, domande, info screen, lead capture, risultati, checkout
+4. Usa data-step="N" e data-step-type="tipo" su ogni screen
+5. Il primo step ha anche la classe "active"
+6. Usa le classi CSS che verranno fornite
+7. NON usare librerie esterne
+8. Genera SOLO markup HTML puro, senza spiegazioni, senza markdown, senza backtick
+9. OGNI step del quiz DEVE essere presente — non saltare nessuno step
+10. Includi SEMPRE: una pagina risultati (data-step-type="results") e una pagina offerta (data-step-type="checkout") alla fine`;
 
 // =====================================================
 // HELPERS
@@ -295,6 +304,30 @@ async function runChunkedGeneration(
   const brandingText = buildBrandingText(branding);
   const totalSteps = branding.funnelSteps.length;
 
+  // Extract unique input types and step-type mapping from funnel steps
+  const inputTypes = new Set<string>();
+  const stepTypeMapping: Record<number, string> = {};
+  if (funnelSteps) {
+    for (const s of funnelSteps) {
+      if (s.input_type) inputTypes.add(s.input_type);
+      stepTypeMapping[s.step_index] = s.step_type || 'other';
+    }
+  }
+  // Also extract from branding steps
+  for (const s of branding.funnelSteps) {
+    stepTypeMapping[s.stepIndex] = s.originalPageType || 'other';
+  }
+
+  // Ensure results and checkout are in the mapping
+  const hasResults = Object.values(stepTypeMapping).some(t => t === 'results' || t === 'thank_you');
+  const hasCheckout = Object.values(stepTypeMapping).some(t => t === 'checkout');
+  if (!hasResults) stepTypeMapping[totalSteps] = 'results';
+  if (!hasCheckout) stepTypeMapping[totalSteps + (hasResults ? 0 : 1)] = 'checkout';
+
+  const inputTypesStr = inputTypes.size > 0
+    ? Array.from(inputTypes).join(', ')
+    : 'multiple_choice, text_input, button';
+
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
 
@@ -304,16 +337,18 @@ async function runChunkedGeneration(
   const cssUserPrompt =
     `Genera il CSS design system completo per un quiz funnel di ${totalSteps} step.\n\n` +
     designText +
-    `Il CSS DEVE usare i colori hex ESATTI dalla design spec sopra come CSS custom properties.\n` +
+    `Il CSS DEVE usare i colori hex ESATTI dalla design spec sopra come CSS custom properties.\n\n` +
+    `TIPI DI INPUT PRESENTI NEL QUIZ: ${inputTypesStr}\n` +
+    `Genera classi CSS specifiche per OGNI tipo di input elencato sopra.\n\n` +
     `Includi: :root variables, *, body reset, .quiz-container, .quiz-step (hidden by default), .quiz-step.active (visible), ` +
     `.progress-bar, .progress-fill, .quiz-question, .quiz-options, .quiz-option (card stile), .quiz-option.selected, ` +
-    `.quiz-btn (CTA button), .quiz-result, .quiz-intro, .quiz-lead-capture, ` +
+    `.quiz-btn (CTA button), .quiz-btn-back (back button), .quiz-result, .quiz-intro, .quiz-lead-capture, .quiz-checkout, .quiz-info-screen, ` +
     `animazioni (@keyframes fadeIn, slideUp), transizioni hover, responsive media queries.\n\n` +
     `Output SOLO il CSS puro senza tag <style> e senza spiegazioni.`;
 
   const cssStream = await client.messages.stream({
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 6000,
+    max_tokens: 8000,
     temperature: 0.3,
     system: SYSTEM_PROMPT_CHUNK_CSS,
     messages: [{ role: 'user', content: cssUserPrompt }],
@@ -330,7 +365,6 @@ async function runChunkedGeneration(
   totalInputTokens += cssFinal.usage.input_tokens;
   totalOutputTokens += cssFinal.usage.output_tokens;
 
-  // Clean CSS: strip any accidental style tags or backticks
   cssCode = cssCode.replace(/^```css\s*/i, '').replace(/```\s*$/i, '').trim();
   cssCode = cssCode.replace(/^<style[^>]*>/i, '').replace(/<\/style>\s*$/i, '').trim();
 
@@ -341,7 +375,8 @@ async function runChunkedGeneration(
 
   let stepsDescription = '';
   for (const step of branding.funnelSteps) {
-    stepsDescription += `Step ${step.stepIndex} [${step.originalPageType}]: `;
+    const stepType = stepTypeMapping[step.stepIndex] || step.originalPageType || 'other';
+    stepsDescription += `Step ${step.stepIndex} [${stepType}]: `;
     if (step.quizQuestion) {
       stepsDescription += `Domanda: "${step.quizQuestion}"`;
       if (step.quizOptions && step.quizOptions.length > 0) {
@@ -353,8 +388,11 @@ async function runChunkedGeneration(
     stepsDescription += '\n';
   }
 
+  const stepMappingStr = JSON.stringify(stepTypeMapping, null, 2);
+
   const jsUserPrompt =
     `Genera il JavaScript engine per un quiz di ${totalSteps} step.\n\n` +
+    `STEP-TYPE MAPPING (usa questo per capire COSA fa ogni step):\n${stepMappingStr}\n\n` +
     `STRUTTURA STEP:\n${stepsDescription}\n` +
     `CLASSI CSS DA USARE:\n` +
     `- .quiz-step: ogni schermata (nascosta per default)\n` +
@@ -362,22 +400,31 @@ async function runChunkedGeneration(
     `- .quiz-option: opzione cliccabile\n` +
     `- .quiz-option.selected: opzione selezionata\n` +
     `- .quiz-btn: bottone CTA/avanti\n` +
+    `- .quiz-btn-back: bottone indietro\n` +
     `- .progress-fill: barra progresso (width in %)\n` +
     `- data-step="N": attributo su ogni screen\n` +
+    `- data-step-type="tipo": attributo con il tipo di step\n` +
     `- data-option: attributo su ogni opzione\n\n` +
+    `LOGICA PER TIPO DI STEP:\n` +
+    `- "intro": mostra intro, bottone avanti\n` +
+    `- "quiz_question": click su opzione → seleziona → auto-avanza dopo 300ms\n` +
+    `- "info_screen": mostra info + bottone Continue\n` +
+    `- "lead_capture": form email con validazione base, bottone submit\n` +
+    `- "results": mostra risultato personalizzato (usa le risposte raccolte per personalizzare il testo)\n` +
+    `- "checkout": mostra offerta con CTA link esterno\n\n` +
     `Il JS deve:\n` +
     `1. Inizializzare mostrando step 0\n` +
-    `2. Gestire click su opzioni (toggle .selected)\n` +
-    `3. Navigare tra step con animazione\n` +
-    `4. Aggiornare la progress bar\n` +
-    `5. Raccogliere risposte in un oggetto\n` +
-    `6. Mostrare risultato finale personalizzato\n` +
-    `7. Gestire email input (se presente) con validazione base\n\n` +
+    `2. Gestire il comportamento diverso per ogni data-step-type\n` +
+    `3. Navigare tra step con animazione (fadeIn/slideUp)\n` +
+    `4. Aggiornare la progress bar in base allo step corrente\n` +
+    `5. Raccogliere tutte le risposte in un oggetto\n` +
+    `6. Bottone back funzionante (tranne primo step)\n` +
+    `7. Nella pagina results, personalizzare il testo con le risposte raccolte\n\n` +
     `Output SOLO il JavaScript puro senza tag <script> e senza spiegazioni.`;
 
   const jsStream = await client.messages.stream({
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 8000,
+    max_tokens: 12000,
     temperature: 0.3,
     system: SYSTEM_PROMPT_CHUNK_JS,
     messages: [{ role: 'user', content: jsUserPrompt }],
@@ -399,8 +446,8 @@ async function runChunkedGeneration(
 
   controller.enqueue(sseEncode({ phase: 'js_done', jsLength: jsCode.length }));
 
-  // ── CHUNK 3: HTML Assembly ──
-  controller.enqueue(sseEncode({ phase: 'html', phaseLabel: 'Assemblaggio HTML finale...' }));
+  // ── CHUNK 3: HTML Markup Only (server assembles final file) ──
+  controller.enqueue(sseEncode({ phase: 'html', phaseLabel: 'Generazione markup HTML...' }));
 
   const htmlUserContent: Anthropic.Messages.ContentBlockParam[] = [];
 
@@ -412,10 +459,7 @@ async function runChunkedGeneration(
   }
 
   let htmlTextPrompt =
-    `Assembla il file HTML completo del quiz funnel.\n\n` +
-    `Il CSS e il JavaScript sono già stati scritti. Tu devi generare il markup HTML completo che li integra.\n\n` +
-    `=== CSS (inseriscilo nel tag <style> nel <head>) ===\n${cssCode}\n\n` +
-    `=== JAVASCRIPT (inseriscilo nel tag <script> prima di </body>) ===\n${jsCode}\n\n` +
+    `Genera SOLO il markup HTML del body per il quiz funnel (il CSS e JS verranno inseriti automaticamente dal server).\n\n` +
     brandingText +
     designText;
 
@@ -428,15 +472,20 @@ async function runChunkedGeneration(
   }
 
   htmlTextPrompt +=
-    `GENERA il file HTML completo:\n` +
-    `- Ogni step del quiz come <div class="quiz-step" data-step="N">\n` +
+    `STEP-TYPE MAPPING: ${stepMappingStr}\n\n` +
+    `GENERA SOLO il markup HTML del body:\n` +
+    `- Progress bar: <div class="progress-bar"><div class="progress-fill"></div></div>\n` +
+    `- Quiz container: <div class="quiz-container">...</div>\n` +
+    `- Ogni step: <div class="quiz-step" data-step="N" data-step-type="tipo">...</div>\n` +
     `- Il primo step ha anche la classe "active"\n` +
-    `- Progress bar con <div class="progress-bar"><div class="progress-fill"></div></div>\n` +
-    `- Opzioni come <div class="quiz-option" data-option="valore">\n` +
-    `- Bottoni come <button class="quiz-btn">\n` +
+    `- Opzioni: <div class="quiz-option" data-option="valore">...</div>\n` +
+    `- Bottone avanti: <button class="quiz-btn">...</button>\n` +
+    `- Bottone back: <button class="quiz-btn-back">...</button>\n` +
     `- Usa i testi ESATTI dal branding fornito sopra\n` +
-    `- Il CSS va dentro <style> e il JS dentro <script>\n` +
-    `- Output: da <!DOCTYPE html> a </html>, niente altro.`;
+    `- DEVI includere TUTTI gli step dal branding — non saltare nessuno\n` +
+    `- DEVI includere step results e checkout alla fine\n` +
+    `- NON generare <!DOCTYPE>, <html>, <head>, <style> o <script> — SOLO il markup body\n` +
+    `- Output: dal primo <div> all'ultimo </div>, niente altro.`;
 
   htmlUserContent.push({ type: 'text', text: htmlTextPrompt });
 
@@ -448,16 +497,47 @@ async function runChunkedGeneration(
     messages: [{ role: 'user', content: htmlUserContent }],
   });
 
-  let htmlCode = '';
+  let htmlMarkup = '';
   for await (const event of htmlStream) {
     if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-      htmlCode += event.delta.text;
-      controller.enqueue(sseEncode({ text: event.delta.text }));
+      htmlMarkup += event.delta.text;
+      controller.enqueue(sseEncode({ chunk: 'html_markup', text: event.delta.text }));
     }
   }
   const htmlFinal = await htmlStream.finalMessage();
   totalInputTokens += htmlFinal.usage.input_tokens;
   totalOutputTokens += htmlFinal.usage.output_tokens;
+
+  // Clean HTML markup
+  htmlMarkup = htmlMarkup.replace(/^```html?\s*/i, '').replace(/```\s*$/i, '').trim();
+  // Remove any accidental full HTML wrapping
+  htmlMarkup = htmlMarkup.replace(/^<!DOCTYPE[^>]*>/i, '').replace(/<\/?html[^>]*>/gi, '')
+    .replace(/<head>[\s\S]*?<\/head>/gi, '').replace(/<\/?body[^>]*>/gi, '').trim();
+
+  // ── SERVER-SIDE ASSEMBLY ──
+  controller.enqueue(sseEncode({ phase: 'assembling', phaseLabel: 'Assemblaggio finale lato server...' }));
+
+  const title = (funnelMeta as Record<string, unknown>)?.funnel_name || 'Quiz Funnel';
+  const finalHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${title}</title>
+<style>
+${cssCode}
+</style>
+</head>
+<body>
+${htmlMarkup}
+<script>
+${jsCode}
+</script>
+</body>
+</html>`;
+
+  // Send the assembled HTML as the final output
+  controller.enqueue(sseEncode({ assembled: true, html: finalHtml, htmlLength: finalHtml.length }));
 
   return { totalInputTokens, totalOutputTokens };
 }

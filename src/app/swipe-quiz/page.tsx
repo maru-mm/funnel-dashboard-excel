@@ -89,22 +89,26 @@ interface SwapPayload {
 type PipelinePhase =
   | 'idle'
   | 'fetching_screenshots'
+  | 'analyzing_steps'
   | 'analyzing_design'
   | 'generating_branding'
   | 'generating_css'
   | 'generating_js'
   | 'generating_html'
+  | 'assembling'
   | 'done'
   | 'error';
 
 const PHASE_LABELS: Record<PipelinePhase, string> = {
   idle: '',
   fetching_screenshots: 'Recupero screenshot dal database...',
+  analyzing_steps: 'Analisi per-step con Gemini Vision...',
   analyzing_design: 'Analisi design con Gemini Vision...',
   generating_branding: 'Generazione branding con AI...',
   generating_css: 'Generazione CSS Design System...',
   generating_js: 'Generazione Quiz Engine JS...',
-  generating_html: 'Assemblaggio HTML finale...',
+  generating_html: 'Generazione markup HTML...',
+  assembling: 'Assemblaggio finale lato server...',
   done: 'Completato!',
   error: 'Errore',
 };
@@ -183,6 +187,11 @@ export default function SwipeQuizPage() {
   // Pipeline phase tracking for chunked mode
   const [pipelinePhase, setPipelinePhase] = useState<PipelinePhase>('idle');
   const [useChunkedMode, setUseChunkedMode] = useState(true);
+
+  // Multi-Agent mode (new: clone + 4 Gemini agents + Claude transform)
+  const [useMultiAgentMode, setUseMultiAgentMode] = useState(true);
+  const [multiAgentPhase, setMultiAgentPhase] = useState('');
+  const [multiAgentConfidence, setMultiAgentConfidence] = useState<number | null>(null);
 
   // Filter quiz-type funnel pages from the store
   const quizFunnelPages = useMemo(
@@ -371,21 +380,34 @@ export default function SwipeQuizPage() {
                 setPipelinePhase('generating_html');
                 setGenerationPhase(data.phaseLabel || PHASE_LABELS.generating_html);
                 setStreamProgress(65);
+              } else if (data.phase === 'assembling') {
+                setPipelinePhase('assembling');
+                setGenerationPhase(data.phaseLabel || PHASE_LABELS.assembling);
+                setStreamProgress(90);
               }
               continue;
             }
 
-            // Chunked mode: chunk text (CSS/JS not shown as main code, only HTML)
+            // Server-side assembled HTML (new chunked mode: CSS+JS+HTML assembled on server)
+            if (data.assembled && data.html) {
+              accumulated = data.html;
+              setGeneratedCode(accumulated);
+              updateIframe(accumulated);
+              setStreamProgress(95);
+              continue;
+            }
+
+            // Chunked mode: chunk text (CSS/JS/HTML markup — intermediate, don't show in preview)
             if (data.chunk && data.text) {
-              // CSS and JS chunks are intermediate — don't show in preview
-              // but can track progress
               if (data.chunk === 'css' || data.chunk === 'js') {
                 setStreamProgress((prev) => Math.min(prev + 0.3, currentChunk === 'css' ? 44 : 64));
+              } else if (data.chunk === 'html_markup') {
+                setStreamProgress((prev) => Math.min(prev + 0.3, 89));
               }
               continue;
             }
 
-            // Main text output (legacy mode or HTML chunk in chunked mode)
+            // Main text output (legacy mode only — non-chunked)
             if (data.text) {
               accumulated += data.text;
               setGeneratedCode(accumulated);
@@ -466,7 +488,7 @@ export default function SwipeQuizPage() {
 
     setPrompt(swapPrompt);
 
-    // ── CHUNKED PIPELINE: Design Spec + Branding + Chunked Generation ──
+    // ── CHUNKED PIPELINE: Per-Step Analysis + Branding + Chunked Generation ──
     if (useChunkedMode && product) {
       setIsGenerating(true);
       setGeneratedCode('');
@@ -474,68 +496,90 @@ export default function SwipeQuizPage() {
       setError(null);
       setStreamProgress(0);
       setActiveTab('preview');
-      setPipelinePhase('fetching_screenshots');
 
       try {
-        // Phase 1: Fetch per-step screenshots from DB
-        setGenerationPhase(PHASE_LABELS.fetching_screenshots);
-        setStreamProgress(5);
+        // Phase 1: Per-step analysis (screenshots + Gemini Vision per ogni step URL)
+        setPipelinePhase('analyzing_steps');
+        setGenerationPhase('Avvio analisi per-step con Gemini Vision...');
+        setStreamProgress(2);
 
-        let screenshotsList: string[] = [];
+        let designSpec = null;
         let singleScreenshot: string | undefined;
+        let cssTokens = null;
 
         try {
-          const ssRes = await fetch('/api/swipe-quiz/fetch-screenshots', {
+          const analysisRes = await fetch('/api/swipe-quiz/per-step-analysis', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ entryUrl: funnel.entry_url, funnelName: funnel.funnel_name }),
+            body: JSON.stringify({ funnelId: funnel.id }),
           });
-          const ssData = await ssRes.json();
-          if (ssData.success && ssData.steps?.length > 0) {
-            screenshotsList = ssData.steps.map((s: { screenshotBase64: string }) => s.screenshotBase64);
+
+          if (analysisRes.ok && analysisRes.body) {
+            const reader = analysisRes.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n\n');
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                  const data = JSON.parse(line.slice(6));
+
+                  if (data.phase === 'analyzing_step') {
+                    setGenerationPhase(
+                      `Analisi step ${data.current}/${data.total}: ${data.stepTitle}...`,
+                    );
+                    setStreamProgress(2 + Math.round((data.current / data.total) * 15));
+                  } else if (data.phase === 'step_done') {
+                    setStreamProgress(2 + Math.round((data.current / data.total) * 15));
+                  } else if (data.phase === 'complete') {
+                    designSpec = data.designSpec || null;
+                    if (data.screenshots?.length > 0) {
+                      singleScreenshot = data.screenshots[0];
+                      setScreenshotBase64(data.screenshots[0]);
+                    }
+                  }
+                } catch {
+                  // skip malformed SSE
+                }
+              }
+            }
           }
-        } catch {
-          // Fallback: will capture single screenshot below
+        } catch (err) {
+          console.warn('Per-step analysis failed, continuing with fallback:', err);
         }
 
-        // Fallback: capture single screenshot if no DB screenshots
-        if (screenshotsList.length === 0 && captureScreenshot && funnel.entry_url) {
-          setGenerationPhase('Cattura screenshot del quiz originale...');
+        // Fallback: single screenshot if per-step analysis failed
+        if (!designSpec && captureScreenshot && funnel.entry_url) {
+          setPipelinePhase('analyzing_design');
+          setGenerationPhase('Cattura screenshot del quiz originale (fallback)...');
           const result = await captureQuizScreenshot(funnel.entry_url);
           if (result) {
             singleScreenshot = result;
-            screenshotsList = [result];
-          }
-        }
-
-        setStreamProgress(10);
-
-        // Phase 2: Design Analysis with Gemini Vision
-        setPipelinePhase('analyzing_design');
-        setGenerationPhase(PHASE_LABELS.analyzing_design);
-
-        let designSpec = null;
-        let cssTokens = null;
-
-        if (screenshotsList.length > 0) {
-          try {
-            const designRes = await fetch('/api/swipe-quiz/design-analysis', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                screenshots: screenshotsList.slice(0, 3),
-              }),
-            });
-            const designData = await designRes.json();
-            if (designData.success && designData.designSpec) {
-              designSpec = designData.designSpec;
+            try {
+              const designRes = await fetch('/api/swipe-quiz/design-analysis', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ screenshots: [result] }),
+              });
+              const designData = await designRes.json();
+              if (designData.success && designData.designSpec) {
+                designSpec = designData.designSpec;
+              }
+            } catch {
+              // Design analysis is best-effort
             }
-          } catch (err) {
-            console.warn('Design analysis failed, continuing without:', err);
           }
         }
 
-        // Also get CSS tokens from live page if we have a screenshot endpoint
+        // CSS tokens from live page
         if (captureScreenshot && funnel.entry_url && !singleScreenshot) {
           try {
             const cssRes = await fetch('/api/swipe-quiz/screenshot', {
@@ -556,9 +600,9 @@ export default function SwipeQuizPage() {
           }
         }
 
-        setStreamProgress(18);
+        setStreamProgress(20);
 
-        // Phase 3: Generate Branding
+        // Phase 2: Generate Branding (using funnelId for direct affiliate_saved_funnels support)
         setPipelinePhase('generating_branding');
         setGenerationPhase(PHASE_LABELS.generating_branding);
 
@@ -568,17 +612,8 @@ export default function SwipeQuizPage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              entryUrl: funnel.entry_url,
-              funnelName: funnel.funnel_name,
+              funnelId: funnel.id,
               product,
-              funnelMeta: {
-                funnel_type: funnel.funnel_type,
-                category: funnel.category,
-                analysis_summary: funnel.analysis_summary,
-                persuasion_techniques: funnel.persuasion_techniques,
-                lead_capture_method: funnel.lead_capture_method,
-                notable_elements: funnel.notable_elements,
-              },
               options: { provider: 'gemini', language: 'it' },
             }),
           });
@@ -587,12 +622,42 @@ export default function SwipeQuizPage() {
             brandingResult = brandingData.branding;
           }
         } catch (err) {
-          console.warn('Branding generation failed:', err);
+          console.warn('Branding generation (funnelId mode) failed:', err);
         }
 
-        setStreamProgress(28);
+        // Fallback: try legacy branding if funnelId mode failed
+        if (!brandingResult) {
+          try {
+            const brandingRes = await fetch('/api/swipe-quiz/generate-branding', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                entryUrl: funnel.entry_url,
+                funnelName: funnel.funnel_name,
+                product,
+                funnelMeta: {
+                  funnel_type: funnel.funnel_type,
+                  category: funnel.category,
+                  analysis_summary: funnel.analysis_summary,
+                  persuasion_techniques: funnel.persuasion_techniques,
+                  lead_capture_method: funnel.lead_capture_method,
+                  notable_elements: funnel.notable_elements,
+                },
+                options: { provider: 'gemini', language: 'it' },
+              }),
+            });
+            const brandingData = await brandingRes.json();
+            if (brandingData.success && brandingData.branding) {
+              brandingResult = brandingData.branding;
+            }
+          } catch (err) {
+            console.warn('Legacy branding also failed:', err);
+          }
+        }
 
-        // If branding was generated, use chunked mode
+        setStreamProgress(30);
+
+        // Phase 3: Chunked generation (CSS → JS → HTML markup → server assembly)
         if (brandingResult) {
           setPipelinePhase('generating_css');
           setGenerationPhase(PHASE_LABELS.generating_css);
@@ -649,6 +714,161 @@ export default function SwipeQuizPage() {
     });
   };
 
+  // ── MULTI-AGENT MODE: Clone + 4 Gemini Agents + Claude Transform ──
+  const generateMultiAgent = async (funnel: AffiliateSavedFunnel) => {
+    if (!selectedProduct || isGenerating) return;
+
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setIsGenerating(true);
+    setGeneratedCode('');
+    setUsage(null);
+    setError(null);
+    setStreamProgress(0);
+    setActiveTab('preview');
+    setMultiAgentPhase('cloning_html');
+    setMultiAgentConfidence(null);
+    setGenerationPhase('Clonazione HTML originale...');
+    setPipelinePhase('idle');
+
+    const steps = Array.isArray(funnel.steps)
+      ? (funnel.steps as unknown as AffiliateFunnelStep[])
+      : [];
+
+    let accumulated = '';
+
+    try {
+      const response = await fetch('/api/swipe-quiz/multiagent-generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entryUrl: funnel.entry_url,
+          funnelName: funnel.funnel_name,
+          product: {
+            name: selectedProduct.name,
+            description: selectedProduct.description,
+            price: selectedProduct.price,
+            benefits: selectedProduct.benefits,
+            ctaText: selectedProduct.ctaText,
+            ctaUrl: selectedProduct.ctaUrl,
+            brandName: selectedProduct.brandName,
+          },
+          funnelSteps: steps,
+          funnelMeta: {
+            funnel_type: funnel.funnel_type,
+            category: funnel.category,
+            analysis_summary: funnel.analysis_summary,
+            persuasion_techniques: funnel.persuasion_techniques,
+            lead_capture_method: funnel.lead_capture_method,
+            notable_elements: funnel.notable_elements,
+          },
+          extraInstructions: prompt || undefined,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || `Errore HTTP ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('Impossibile leggere lo stream');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const jsonStr = line.slice(6);
+
+          try {
+            const data = JSON.parse(jsonStr);
+
+            if (data.error) {
+              setError(data.error);
+              break;
+            }
+
+            if (data.done) {
+              setUsage(data.usage || null);
+              setMultiAgentConfidence(data.masterSpecSummary?.confidence ?? null);
+              setGenerationPhase('');
+              setMultiAgentPhase('done');
+              break;
+            }
+
+            // Phase updates
+            if (data.phase) {
+              setMultiAgentPhase(data.phase);
+              if (data.message) setGenerationPhase(data.message);
+
+              // Update progress based on phase
+              const phaseProgressMap: Record<string, number> = {
+                cloning_html: 5,
+                cloning_done: 10,
+                fetching_screenshots: 12,
+                screenshots_ready: 15,
+                agents_start: 18,
+                parallel_agents: 20,
+                agent_visual: 25,
+                agent_ux_flow: 30,
+                agent_cro: 35,
+                agent_quiz_logic: 40,
+                agents_done: 55,
+                synthesizing: 58,
+                generating_branding: 62,
+                branding_done: 68,
+                transforming_html: 70,
+              };
+              const progress = phaseProgressMap[data.phase];
+              if (progress) setStreamProgress(progress);
+            }
+
+            // HTML text streaming from Claude transform
+            if (data.text) {
+              accumulated += data.text;
+              setGeneratedCode(accumulated);
+              setStreamProgress(prev => Math.min(prev + 0.3, 95));
+
+              if (
+                accumulated.includes('</style>') ||
+                accumulated.includes('</body>') ||
+                accumulated.includes('</html>')
+              ) {
+                updateIframe(accumulated);
+              }
+            }
+          } catch {
+            // skip malformed JSON
+          }
+        }
+      }
+
+      if (accumulated) {
+        updateIframe(accumulated);
+        setStreamProgress(100);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return;
+      setError(err instanceof Error ? err.message : 'Errore durante il pipeline multi-agente');
+    } finally {
+      setIsGenerating(false);
+      setGenerationPhase('');
+      abortControllerRef.current = null;
+    }
+  };
+
   const stopGeneration = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -684,6 +904,8 @@ export default function SwipeQuizPage() {
     setScreenshotBase64(null);
     setGenerationPhase('');
     setPipelinePhase('idle');
+    setMultiAgentPhase('');
+    setMultiAgentConfidence(null);
     if (iframeRef.current) {
       iframeRef.current.srcdoc = '';
     }
@@ -895,15 +1117,54 @@ export default function SwipeQuizPage() {
               />
             </div>
 
+            {/* Mode toggle */}
+            <div className="mt-3 flex items-center gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="swapMode"
+                  checked={useMultiAgentMode}
+                  onChange={() => setUseMultiAgentMode(true)}
+                  className="w-3.5 h-3.5 text-indigo-600"
+                />
+                <span className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                  <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                  Multi-Agent (Clone + Trasforma)
+                </span>
+                <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">Fedele</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="swapMode"
+                  checked={!useMultiAgentMode}
+                  onChange={() => setUseMultiAgentMode(false)}
+                  className="w-3.5 h-3.5 text-gray-400"
+                />
+                <span className="text-xs text-gray-500">
+                  Pipeline Legacy (genera da zero)
+                </span>
+              </label>
+            </div>
+
             <button
-              onClick={() => generateSwap(selectedFunnel)}
+              onClick={() => useMultiAgentMode ? generateMultiAgent(selectedFunnel) : generateSwap(selectedFunnel)}
               disabled={isGenerating}
-              className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold shadow-md"
+              className={`mt-4 w-full flex items-center justify-center gap-2 px-5 py-3 text-white rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold shadow-md ${
+                useMultiAgentMode
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700'
+                  : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700'
+              }`}
             >
               {isGenerating ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   {generationPhase || 'Generazione...'}
+                </>
+              ) : useMultiAgentMode ? (
+                <>
+                  <Layers className="w-4 h-4" />
+                  Clone &amp; Trasforma Quiz (Multi-Agent)
                 </>
               ) : (
                 <>
@@ -1363,8 +1624,58 @@ export default function SwipeQuizPage() {
         {/* Pipeline Progress */}
         {isGenerating && (
           <div className="mb-4">
-            {/* Multi-phase indicator for chunked mode */}
-            {pipelinePhase !== 'idle' && (
+            {/* Multi-Agent phase indicator */}
+            {multiAgentPhase && multiAgentPhase !== 'idle' && multiAgentPhase !== 'done' && (
+              <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
+                {([
+                  { key: 'cloning_html', label: 'Clone HTML' },
+                  { key: 'agent_visual', label: 'Visual AI' },
+                  { key: 'agent_ux_flow', label: 'UX Flow AI' },
+                  { key: 'agent_cro', label: 'CRO AI' },
+                  { key: 'agent_quiz_logic', label: 'Logic AI' },
+                  { key: 'synthesizing', label: 'Sintesi' },
+                  { key: 'generating_branding', label: 'Branding' },
+                  { key: 'transforming_html', label: 'Trasforma' },
+                ] as const).map((item, idx, arr) => {
+                  const allPhases = arr.map(a => a.key);
+                  const currentIdx = allPhases.indexOf(multiAgentPhase as typeof allPhases[number]);
+                  const thisIdx = idx;
+                  const isCurrent = multiAgentPhase === item.key ||
+                    (multiAgentPhase === 'parallel_agents' && thisIdx >= 1 && thisIdx <= 4) ||
+                    (multiAgentPhase.startsWith('agent_') && item.key.startsWith('agent_') && multiAgentPhase === item.key);
+                  const isPast = currentIdx > thisIdx ||
+                    (multiAgentPhase === 'agents_done' && thisIdx <= 4) ||
+                    (multiAgentPhase === 'synthesizing' && thisIdx <= 4) ||
+                    (multiAgentPhase === 'generating_branding' && thisIdx <= 5) ||
+                    (multiAgentPhase === 'branding_done' && thisIdx <= 6) ||
+                    (multiAgentPhase === 'transforming_html' && thisIdx <= 6);
+                  const isParallel = thisIdx >= 1 && thisIdx <= 4 &&
+                    (multiAgentPhase === 'parallel_agents' || multiAgentPhase === 'agents_start' || multiAgentPhase.startsWith('agent_'));
+
+                  return (
+                    <div key={item.key} className="flex items-center gap-1.5">
+                      <div className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium transition-all whitespace-nowrap ${
+                        isCurrent
+                          ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300'
+                          : isPast
+                            ? 'bg-green-50 text-green-600'
+                            : isParallel
+                              ? 'bg-amber-50 text-amber-600 ring-1 ring-amber-200'
+                              : 'bg-gray-100 text-gray-400'
+                      }`}>
+                        {isPast && <Check className="w-3 h-3" />}
+                        {(isCurrent || isParallel) && !isPast && <Loader2 className="w-3 h-3 animate-spin" />}
+                        {item.label}
+                      </div>
+                      {idx < arr.length - 1 && <span className="text-gray-300 text-[10px]">&rarr;</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Legacy chunked mode phase indicator */}
+            {!multiAgentPhase && pipelinePhase !== 'idle' && (
               <div className="flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
                 {(['fetching_screenshots', 'analyzing_design', 'generating_branding', 'generating_css', 'generating_js', 'generating_html'] as PipelinePhase[]).map((phase, idx) => {
                   const isCurrent = pipelinePhase === phase;
@@ -1396,18 +1707,28 @@ export default function SwipeQuizPage() {
                 })}
               </div>
             )}
+
             <div className="flex items-center gap-3 mb-1">
-              <Zap className="w-4 h-4 text-purple-500 animate-pulse" />
+              <Zap className={`w-4 h-4 animate-pulse ${multiAgentPhase ? 'text-emerald-500' : 'text-purple-500'}`} />
               <span className="text-sm text-gray-600">
                 {generationPhase || 'Generazione in corso...'}
               </span>
+              {multiAgentConfidence !== null && (
+                <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium">
+                  Confidenza: {Math.round(multiAgentConfidence * 100)}%
+                </span>
+              )}
               <span className="text-xs text-gray-400 ml-auto">
                 {Math.round(streamProgress)}%
               </span>
             </div>
             <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-purple-500 to-blue-500 rounded-full transition-all duration-300 ease-out"
+                className={`h-full rounded-full transition-all duration-300 ease-out ${
+                  multiAgentPhase
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500'
+                    : 'bg-gradient-to-r from-purple-500 to-blue-500'
+                }`}
                 style={{ width: `${streamProgress}%` }}
               />
             </div>
@@ -1551,7 +1872,7 @@ export default function SwipeQuizPage() {
         {usage && (
           <div className="mt-4 flex items-center justify-between text-xs text-gray-400">
             <span>
-              Generato con Claude Sonnet 4{pipelinePhase === 'done' ? ' (Pipeline HQ)' : ''} &middot; {generatedCode.length.toLocaleString()}{' '}
+              Generato con Claude Sonnet 4{multiAgentPhase === 'done' ? ' (Multi-Agent Clone+Transform)' : pipelinePhase === 'done' ? ' (Pipeline HQ)' : ''} &middot; {generatedCode.length.toLocaleString()}{' '}
               caratteri
             </span>
             <span>

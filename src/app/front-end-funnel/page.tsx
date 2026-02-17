@@ -40,6 +40,8 @@ import {
   Target,
   Copy,
   Globe,
+  Sparkles,
+  Download,
 } from 'lucide-react';
 
 // Helper: sanitize cloned HTML and rewrite ALL relative URLs to absolute using the original domain
@@ -325,6 +327,20 @@ export default function FrontEndFunnel() {
   const [visionError, setVisionError] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<number[]>([]);
 
+  // Quiz Generation
+  const [quizGenerating, setQuizGenerating] = useState(false);
+  const [quizGenerationPhase, setQuizGenerationPhase] = useState('');
+  const [quizPreviewHtml, setQuizPreviewHtml] = useState<string | null>(null);
+  const [quizPreviewStats, setQuizPreviewStats] = useState<{
+    totalSteps: number;
+    quizQuestions: number;
+    htmlSize: number;
+    funnelName: string;
+    brandName: string | null;
+  } | null>(null);
+  const [quizPreviewOpen, setQuizPreviewOpen] = useState(false);
+  const [quizError, setQuizError] = useState<string | null>(null);
+
   const selectedAffiliateFunnel = useMemo(
     () => (selectedAffiliateFunnelId ? affiliateFunnels.find((f) => f.id === selectedAffiliateFunnelId) : null),
     [selectedAffiliateFunnelId, affiliateFunnels]
@@ -384,6 +400,51 @@ export default function FrontEndFunnel() {
     for (const step of affiliateFunnelSteps) {
       handleUseAffiliateStepForSwipe(step, funnelName);
     }
+  };
+
+  const handleGenerateQuiz = async () => {
+    if (!selectedAffiliateFunnel) return;
+    setQuizGenerating(true);
+    setQuizError(null);
+    setQuizGenerationPhase('Cattura branding dal sito originale...');
+
+    try {
+      const response = await fetch('/api/generate-quiz', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ funnelId: selectedAffiliateFunnel.id }),
+      });
+
+      setQuizGenerationPhase('Generazione quiz con Claude AI...');
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Errore nella generazione del quiz');
+      }
+
+      setQuizPreviewHtml(data.html);
+      setQuizPreviewStats(data.stats);
+      setQuizPreviewOpen(true);
+      setQuizGenerationPhase('');
+    } catch (err) {
+      setQuizError(err instanceof Error ? err.message : 'Errore sconosciuto');
+    } finally {
+      setQuizGenerating(false);
+    }
+  };
+
+  const handleDownloadQuizHtml = () => {
+    if (!quizPreviewHtml || !quizPreviewStats) return;
+    const blob = new Blob([quizPreviewHtml], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${quizPreviewStats.funnelName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}-quiz.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   // Poll job status
@@ -1281,6 +1342,18 @@ export default function FrontEndFunnel() {
                     <Plus className="w-3 h-3" />
                     Importa tutti ({affiliateFunnelSteps.length})
                   </button>
+                  <button
+                    onClick={handleGenerateQuiz}
+                    disabled={quizGenerating || affiliateFunnelSteps.length === 0}
+                    className="px-3 py-1.5 text-xs font-medium bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-lg hover:from-violet-600 hover:to-purple-700 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                  >
+                    {quizGenerating ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3 h-3" />
+                    )}
+                    {quizGenerating ? 'Generando...' : 'Genera Quiz Funnel'}
+                  </button>
                 </div>
               </div>
 
@@ -1304,6 +1377,20 @@ export default function FrontEndFunnel() {
                       {tech}
                     </span>
                   ))}
+                </div>
+              )}
+
+              {/* Quiz generation progress / error */}
+              {quizGenerating && quizGenerationPhase && (
+                <div className="mb-3 flex items-center gap-2 text-sm text-purple-700 bg-purple-50 rounded-lg p-2.5 border border-purple-100">
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  {quizGenerationPhase}
+                </div>
+              )}
+              {quizError && (
+                <div className="mb-3 flex items-center gap-2 text-sm text-red-700 bg-red-50 rounded-lg p-2.5 border border-red-100">
+                  <XCircle className="w-4 h-4 shrink-0" />
+                  {quizError}
                 </div>
               )}
 
@@ -2755,6 +2842,88 @@ export default function FrontEndFunnel() {
                 {cloneMode === 'rewrite' && <><Wand2 className="w-4 h-4" /> Clona &amp; Riscrivi</>}
                 {cloneMode === 'translate' && <><Globe className="w-4 h-4" /> Traduci</>}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ═══ Quiz Preview Modal ═══ */}
+      {quizPreviewOpen && quizPreviewHtml && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[95vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-violet-50 to-purple-50 px-6 py-4 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100">
+                  <Sparkles className="w-5 h-5 text-violet-600" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-bold text-gray-900 truncate">
+                    Quiz Generato — {quizPreviewStats?.funnelName}
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    {quizPreviewStats?.totalSteps} step totali &middot;{' '}
+                    {quizPreviewStats?.quizQuestions} domande &middot;{' '}
+                    {((quizPreviewStats?.htmlSize ?? 0) / 1024).toFixed(1)} KB
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={handleDownloadQuizHtml}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors shadow-sm"
+                >
+                  <Download className="w-4 h-4" />
+                  Scarica HTML
+                </button>
+                <button
+                  onClick={handleGenerateQuiz}
+                  disabled={quizGenerating}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+                >
+                  {quizGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Rigenera
+                </button>
+                <button
+                  onClick={() => setQuizPreviewOpen(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Quiz Preview Iframe */}
+            <div className="flex-1 overflow-hidden bg-gray-100 p-2">
+              <iframe
+                srcDoc={quizPreviewHtml}
+                className="w-full h-full border-0 rounded-lg bg-white shadow-inner"
+                title="Quiz Preview"
+                sandbox="allow-scripts allow-same-origin allow-forms"
+              />
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-gray-200 bg-gray-50 px-6 py-3 flex items-center justify-between shrink-0">
+              <p className="text-xs text-gray-500">
+                Generato da struttura funnel + branding originale via Gemini Vision + Claude AI
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    if (quizPreviewHtml) {
+                      const win = window.open('', '_blank');
+                      if (win) {
+                        win.document.write(quizPreviewHtml);
+                        win.document.close();
+                      }
+                    }
+                  }}
+                  className="text-xs text-violet-600 hover:text-violet-800 hover:underline flex items-center gap-1"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Apri in nuova tab
+                </button>
+              </div>
             </div>
           </div>
         </div>
