@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { chromium, type Browser } from 'playwright';
+import { getSingletonBrowser, type Browser } from '@/lib/get-browser';
 import { supabase } from '@/lib/supabase';
 import type { DesignSpec } from '../design-analysis/route';
 
@@ -22,15 +22,8 @@ interface StepAnalysis {
 
 // ─── Playwright singleton ───
 
-let browserInstance: Browser | null = null;
-
 async function getBrowser(): Promise<Browser> {
-  if (browserInstance && browserInstance.isConnected()) return browserInstance;
-  browserInstance = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  });
-  return browserInstance;
+  return getSingletonBrowser();
 }
 
 async function takeScreenshot(url: string): Promise<string> {

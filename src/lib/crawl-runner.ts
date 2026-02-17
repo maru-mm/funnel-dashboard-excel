@@ -1,7 +1,8 @@
 /**
  * Esegue il crawl in background. Nessun timeout HTTP - il client riceve jobId e fa polling.
  */
-import type { Browser, Page } from 'playwright';
+import type { Browser, Page } from 'playwright-core';
+import { launchBrowser } from '@/lib/get-browser';
 import type {
   FunnelCrawlStep,
   FunnelCrawlLink,
@@ -133,11 +134,7 @@ export async function runCrawl(jobId: string, params: CrawlParams): Promise<void
     const steps: FunnelCrawlStep[] = [];
     const queue: { url: string; depth: number }[] = [{ url: normalizedEntry, depth: 0 }];
 
-    const { chromium } = await import('playwright');
-    browser = await chromium.launch({
-      headless: params.headless ?? true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    browser = await launchBrowser({ headless: params.headless ?? true });
 
     const context = await browser.newContext({
       viewport: { width: viewportWidth, height: viewportHeight },

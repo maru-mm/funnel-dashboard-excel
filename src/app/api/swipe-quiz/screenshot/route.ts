@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { launchBrowser, type Browser } from '@/lib/get-browser';
 
 const SCREENSHOT_TIMEOUT_MS = 60_000;
 
@@ -27,7 +28,7 @@ export interface CssElementTokens {
 }
 
 export async function POST(request: NextRequest) {
-  let browser: import('playwright').Browser | null = null;
+  let browser: Browser | null = null;
 
   try {
     const { url, viewport, extractCss } = (await request.json()) as {
@@ -43,12 +44,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { chromium } = await import('playwright');
-
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    browser = await launchBrowser();
 
     const context = await browser.newContext({
       viewport: {

@@ -11,7 +11,8 @@
  * Il modello Computer Use "vede" lo schermo e genera azioni coordinate-based,
  * risolvendo i problemi di text-matching e quiz selection.
  */
-import type { Browser, Page } from 'playwright';
+import type { Browser, Page } from 'playwright-core';
+import { launchBrowser } from '@/lib/get-browser';
 import type { AgenticCrawlResult, AgenticCrawlStep, ComputerUseAction } from '@/types';
 import { updateAgenticJob } from './agentic-job-store';
 import {
@@ -117,11 +118,7 @@ export async function runAgenticCrawl(
     log(jobId, 'Avvio Computer Use crawl:', entryUrl, '| maxSteps:', maxSteps);
 
     // ----- Launch browser -----
-    const { chromium } = await import('playwright');
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
+    browser = await launchBrowser();
     const context = await browser.newContext({
       viewport: { width: screenWidth, height: screenHeight },
       userAgent:

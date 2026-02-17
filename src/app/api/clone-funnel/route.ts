@@ -1,21 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { chromium, type Browser } from 'playwright';
+import { getSingletonBrowser, type Browser } from '@/lib/get-browser';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-// Reusable browser instance (avoid cold start on every request)
-let browserInstance: Browser | null = null;
-
 async function getBrowser(): Promise<Browser> {
-  if (browserInstance && browserInstance.isConnected()) {
-    return browserInstance;
-  }
-  browserInstance = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  });
-  return browserInstance;
+  return getSingletonBrowser();
 }
 
 // Clone a page using Playwright headless browser - renders JS, captures full DOM + CSS
