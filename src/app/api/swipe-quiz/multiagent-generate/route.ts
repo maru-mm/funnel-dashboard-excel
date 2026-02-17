@@ -1,5 +1,8 @@
 import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+
+export const maxDuration = 300;
+export const dynamic = 'force-dynamic';
 import {
   runMultiAgentAnalysis,
   cloneQuizHtml,

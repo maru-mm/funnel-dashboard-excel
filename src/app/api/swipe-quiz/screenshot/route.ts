@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { launchBrowser, type Browser } from '@/lib/get-browser';
 
+export const maxDuration = 120;
+export const dynamic = 'force-dynamic';
+
 const SCREENSHOT_TIMEOUT_MS = 60_000;
 
 export interface CssTokens {

@@ -33,8 +33,6 @@ export async function launchBrowser(options?: {
 }): Promise<Browser> {
   if (IS_SERVERLESS) {
     const sparticuz = (await import('@sparticuz/chromium')).default;
-    sparticuz.setHeadlessMode = true;
-    sparticuz.setGraphicsMode = false;
 
     return chromium.launch({
       args: sparticuz.args,
