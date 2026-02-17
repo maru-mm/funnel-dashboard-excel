@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import Header from '@/components/Header';
+import { fetchAffiliateSavedFunnels } from '@/lib/supabase-operations';
+import type { AffiliateSavedFunnel } from '@/types/database';
 import {
   Globe,
   Loader2,
@@ -32,6 +34,9 @@ import {
   Wand2,
   MessageSquare,
   Zap,
+  FolderOpen,
+  Search,
+  Link,
 } from 'lucide-react';
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
@@ -126,6 +131,17 @@ interface ApiResponse {
   analysisRaw?: string;
   error?: string;
   details?: string;
+}
+
+interface FunnelStep {
+  step_index: number;
+  url: string;
+  title: string;
+  step_type?: string;
+  input_type?: string;
+  options?: string[];
+  description?: string;
+  cta_text?: string;
 }
 
 type GenPhase = 'idle' | 'generate' | 'review' | 'done' | 'error';
@@ -544,6 +560,49 @@ export default function QuizCreatorPage() {
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  // Saved funnels state
+  const [savedFunnels, setSavedFunnels] = useState<AffiliateSavedFunnel[]>([]);
+  const [funnelsLoading, setFunnelsLoading] = useState(true);
+  const [funnelsExpanded, setFunnelsExpanded] = useState(true);
+  const [expandedFunnelId, setExpandedFunnelId] = useState<string | null>(null);
+  const [funnelSearch, setFunnelSearch] = useState('');
+
+  // Load saved funnels on mount
+  useEffect(() => {
+    const loadFunnels = async () => {
+      setFunnelsLoading(true);
+      try {
+        const data = await fetchAffiliateSavedFunnels();
+        setSavedFunnels(data);
+      } catch (err) {
+        console.error('Errore caricamento funnels salvati:', err);
+      } finally {
+        setFunnelsLoading(false);
+      }
+    };
+    loadFunnels();
+  }, []);
+
+  // Filter funnels by search
+  const filteredFunnels = useMemo(() => {
+    if (!funnelSearch.trim()) return savedFunnels;
+    const q = funnelSearch.toLowerCase();
+    return savedFunnels.filter(
+      (f) =>
+        f.funnel_name?.toLowerCase().includes(q) ||
+        f.brand_name?.toLowerCase().includes(q) ||
+        f.entry_url?.toLowerCase().includes(q) ||
+        f.category?.toLowerCase().includes(q) ||
+        f.funnel_type?.toLowerCase().includes(q)
+    );
+  }, [savedFunnels, funnelSearch]);
+
+  // Select a step URL -> auto-fill the analysis input
+  const selectStepUrl = (stepUrl: string) => {
+    setUrl(stepUrl);
+    setFunnelsExpanded(false);
+  };
+
   // ─── ANALYSIS ──────────────────────────────────────────
 
   const runAnalysis = async () => {
@@ -832,6 +891,161 @@ export default function QuizCreatorPage() {
           <p className="text-xs text-gray-400 mt-3">
             Gemini Vision AI analizza lo screenshot, poi Claude genera HTML identico alla pagina.
           </p>
+        </div>
+
+        {/* ═══ SAVED FUNNELS SECTION ═══ */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+          <button
+            onClick={() => setFunnelsExpanded(!funnelsExpanded)}
+            className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+          >
+            <div className="flex items-center gap-2.5">
+              <FolderOpen className="w-5 h-5 text-indigo-500" />
+              <h3 className="font-semibold text-gray-900">I Miei Quiz Salvati</h3>
+              <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs font-bold rounded-full">
+                {savedFunnels.length}
+              </span>
+            </div>
+            {funnelsExpanded ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+          </button>
+
+          {funnelsExpanded && (
+            <div className="border-t border-gray-100">
+              {/* Search */}
+              <div className="px-6 py-3 bg-gray-50 border-b border-gray-100">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={funnelSearch}
+                    onChange={(e) => setFunnelSearch(e.target.value)}
+                    placeholder="Cerca per nome, brand, URL, categoria..."
+                    className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Funnels List */}
+              <div className="max-h-[420px] overflow-y-auto">
+                {funnelsLoading ? (
+                  <div className="flex items-center justify-center py-10">
+                    <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
+                    <span className="ml-2 text-gray-500 text-sm">Caricamento quiz salvati...</span>
+                  </div>
+                ) : filteredFunnels.length === 0 ? (
+                  <div className="py-10 text-center text-gray-400 text-sm">
+                    {funnelSearch ? 'Nessun risultato trovato.' : 'Nessun quiz salvato.'}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {filteredFunnels.map((funnel) => {
+                      const steps = Array.isArray(funnel.steps) ? (funnel.steps as unknown as FunnelStep[]) : [];
+                      const isExpanded = expandedFunnelId === funnel.id;
+                      const funnelTypeLabel = funnel.funnel_type?.replace(/_/g, ' ') || 'other';
+                      const isQuiz = funnel.funnel_type?.toLowerCase().includes('quiz') ||
+                        steps.some((s) => s.step_type === 'quiz_question' || s.step_type === 'info_screen');
+
+                      return (
+                        <div key={funnel.id} className="group">
+                          {/* Funnel Header */}
+                          <div
+                            className="flex items-center gap-3 px-6 py-3.5 hover:bg-indigo-50/50 cursor-pointer transition-colors"
+                            onClick={() => setExpandedFunnelId(isExpanded ? null : funnel.id)}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="font-medium text-gray-900 text-sm truncate">{funnel.funnel_name}</p>
+                                {isQuiz && (
+                                  <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-bold rounded uppercase shrink-0">Quiz</span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-3 mt-0.5">
+                                {funnel.brand_name && (
+                                  <span className="text-xs text-gray-500">{funnel.brand_name}</span>
+                                )}
+                                <span className="text-xs text-gray-400 capitalize">{funnelTypeLabel}</span>
+                                <span className="text-xs text-gray-400">{steps.length} step{steps.length !== 1 ? 's' : ''}</span>
+                              </div>
+                            </div>
+
+                            {/* Quick-select entry URL */}
+                            <button
+                              onClick={(e) => { e.stopPropagation(); selectStepUrl(funnel.entry_url); }}
+                              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium hover:bg-indigo-200 transition-colors opacity-0 group-hover:opacity-100"
+                              title={funnel.entry_url}
+                            >
+                              <Link className="w-3 h-3" />
+                              Usa Entry URL
+                            </button>
+
+                            <div className={`shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                              <ChevronDown className="w-4 h-4 text-gray-400" />
+                            </div>
+                          </div>
+
+                          {/* Expanded Steps */}
+                          {isExpanded && steps.length > 0 && (
+                            <div className="bg-gray-50/70 border-t border-gray-100">
+                              <div className="px-6 py-2">
+                                <p className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 mb-2">
+                                  Seleziona uno step per analizzarlo
+                                </p>
+                              </div>
+                              <div className="divide-y divide-gray-100">
+                                {steps.map((step, idx) => (
+                                  <button
+                                    key={idx}
+                                    onClick={() => selectStepUrl(step.url)}
+                                    className="w-full flex items-center gap-3 px-6 py-2.5 text-left hover:bg-indigo-50 transition-colors group/step"
+                                  >
+                                    <div className="w-7 h-7 rounded-lg bg-white border border-gray-200 flex items-center justify-center text-xs font-bold text-gray-500 shrink-0 group-hover/step:bg-indigo-100 group-hover/step:text-indigo-600 group-hover/step:border-indigo-200 transition-colors">
+                                      {step.step_index + 1}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm text-gray-800 truncate">
+                                        {step.title || `Step ${step.step_index + 1}`}
+                                      </p>
+                                      <p className="text-[11px] text-gray-400 truncate font-mono">{step.url}</p>
+                                    </div>
+                                    {step.step_type && (
+                                      <span className={`shrink-0 px-2 py-0.5 rounded text-[10px] font-medium ${
+                                        step.step_type === 'quiz_question' ? 'bg-purple-100 text-purple-600' :
+                                        step.step_type === 'info_screen' ? 'bg-blue-100 text-blue-600' :
+                                        step.step_type === 'results' ? 'bg-green-100 text-green-600' :
+                                        step.step_type === 'lead_capture' ? 'bg-amber-100 text-amber-600' :
+                                        'bg-gray-100 text-gray-500'
+                                      }`}>
+                                        {step.step_type.replace(/_/g, ' ')}
+                                      </span>
+                                    )}
+                                    <ArrowRight className="w-4 h-4 text-gray-300 shrink-0 group-hover/step:text-indigo-500 transition-colors" />
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Expanded but no steps - show entry URL */}
+                          {isExpanded && steps.length === 0 && (
+                            <div className="bg-gray-50/70 border-t border-gray-100 px-6 py-4">
+                              <p className="text-sm text-gray-500 mb-2">Nessuno step salvato. Usa l&apos;entry URL:</p>
+                              <button
+                                onClick={() => selectStepUrl(funnel.entry_url)}
+                                className="flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium hover:bg-indigo-200 transition-colors"
+                              >
+                                <Link className="w-4 h-4" />
+                                <span className="truncate">{funnel.entry_url}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Loading State (Analysis) */}
