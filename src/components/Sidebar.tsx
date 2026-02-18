@@ -17,6 +17,7 @@ import {
   HelpCircle,
   Wand2,
   FlipVertical,
+  Copy,
 } from 'lucide-react';
 
 const menuItems = [
@@ -84,6 +85,11 @@ const menuItems = [
     name: 'Swipe Quiz',
     href: '/swipe-quiz',
     icon: HelpCircle,
+  },
+  {
+    name: 'Clone & Swipe',
+    href: '/clone-landing',
+    icon: Copy,
   },
 ];
 

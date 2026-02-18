@@ -42,7 +42,9 @@ import {
   Globe,
   Sparkles,
   Download,
+  Paintbrush,
 } from 'lucide-react';
+import VisualHtmlEditor from '@/components/VisualHtmlEditor';
 
 // Helper: sanitize cloned HTML and rewrite ALL relative URLs to absolute using the original domain
 // Strips scripts, rewrites src/href/url() so CSS, images, fonts load correctly in preview
@@ -250,6 +252,8 @@ export default function FrontEndFunnel() {
     iframeSrc: string;
     metadata: { method: string; length: number; duration: number } | null;
   }>({ isOpen: false, title: '', html: '', iframeSrc: '', metadata: null });
+
+  const [showVisualEditor, setShowVisualEditor] = useState(false);
 
   // Swipe Configuration Modal
   const [swipeConfigModal, setSwipeConfigModal] = useState<{
@@ -2083,6 +2087,15 @@ export default function FrontEndFunnel() {
                 </button>
                 {htmlPreviewModal.html && (
                   <button
+                    onClick={() => setShowVisualEditor(true)}
+                    className="px-4 py-2 text-sm font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1.5 border-b-2 border-transparent hover:border-amber-400 transition-colors"
+                  >
+                    <Paintbrush className="w-3.5 h-3.5" />
+                    Modifica Visivamente
+                  </button>
+                )}
+                {htmlPreviewModal.html && (
+                  <button
                     onClick={() => {
                       navigator.clipboard.writeText(htmlPreviewModal.html);
                       alert('HTML copied to clipboard!');
@@ -2130,6 +2143,15 @@ export default function FrontEndFunnel() {
 
             {/* Modal Footer */}
             <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
+              {htmlPreviewModal.html && (
+                <button
+                  onClick={() => setShowVisualEditor(true)}
+                  className="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors flex items-center gap-2 mr-auto"
+                >
+                  <Paintbrush className="w-4 h-4" />
+                  Modifica Visivamente
+                </button>
+              )}
               {htmlPreviewModal.html && (
                 <button
                   onClick={() => {
@@ -2927,6 +2949,18 @@ export default function FrontEndFunnel() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Visual HTML Editor */}
+      {showVisualEditor && htmlPreviewModal.html && (
+        <VisualHtmlEditor
+          initialHtml={htmlPreviewModal.html}
+          pageTitle={htmlPreviewModal.title || 'Modifica Landing'}
+          onSave={(html) => {
+            setHtmlPreviewModal(prev => ({ ...prev, html }));
+          }}
+          onClose={() => setShowVisualEditor(false)}
+        />
       )}
     </div>
   );

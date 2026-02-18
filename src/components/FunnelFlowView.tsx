@@ -14,9 +14,10 @@ import {
   Tag,
   Sparkles,
   GripHorizontal,
-  AlertCircle,
-  RefreshCw,
   Move,
+  Image as ImageIcon,
+  Link2,
+  Loader2,
 } from 'lucide-react';
 
 /* ────────── Types ────────── */
@@ -86,40 +87,28 @@ function buildInitialPositions(count: number): NodePos[] {
   return positions;
 }
 
-/* ────────── IframePreview ────────── */
+/* ────────── StepPreview ────────── */
 
-function IframePreview({ url, title }: { url: string; title: string }) {
-  const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
-
-  useEffect(() => {
-    setStatus('loading');
-    timeoutRef.current = setTimeout(() => setStatus('loaded'), 6000);
-    return () => clearTimeout(timeoutRef.current);
-  }, [url]);
+function StepPreview({ url, title, screenshotBase64 }: { url: string; title: string; screenshotBase64?: string }) {
+  if (screenshotBase64) {
+    return (
+      <div className="relative w-full h-full bg-white overflow-hidden">
+        <img
+          src={`data:image/png;base64,${screenshotBase64}`}
+          alt={`Preview: ${title}`}
+          className="w-full h-full object-cover object-top"
+          draggable={false}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="relative w-full h-full bg-white overflow-hidden">
-      {status === 'loading' && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-50/90">
-          <RefreshCw className="h-3.5 w-3.5 text-slate-400 animate-spin" />
-        </div>
-      )}
-      {status === 'error' && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-50 p-2">
-          <AlertCircle className="h-4 w-4 text-slate-300" />
-          <p className="mt-1 text-[8px] text-slate-400 text-center leading-tight">Non disponibile</p>
-        </div>
-      )}
-      <iframe
-        src={url}
-        title={`Preview: ${title}`}
-        onLoad={() => { clearTimeout(timeoutRef.current); setStatus('loaded'); }}
-        onError={() => { clearTimeout(timeoutRef.current); setStatus('error'); }}
-        sandbox="allow-scripts allow-same-origin"
-        className="absolute top-0 left-0 border-0 pointer-events-none"
-        style={{ width: '1280px', height: '900px', transform: 'scale(0.155)', transformOrigin: 'top left' }}
-      />
+    <div className="flex flex-col items-center justify-center h-full bg-gradient-to-br from-slate-50 to-slate-100 gap-1 px-2">
+      <ImageIcon className="h-5 w-5 text-slate-300" />
+      <p className="text-[7px] text-slate-400 text-center leading-tight truncate w-full" title={url}>
+        {new URL(url).hostname}
+      </p>
     </div>
   );
 }
@@ -193,6 +182,42 @@ export default function FunnelFlowView({ funnel, onClose }: FunnelFlowViewProps)
   const [positions, setPositions] = useState<NodePos[]>(() => buildInitialPositions(steps.length));
   const [selectedStep, setSelectedStep] = useState<number | null>(null);
   const [, forceRender] = useState(0);
+
+  const [screenshots, setScreenshots] = useState<Record<string, string>>({});
+  const [screenshotsLoading, setScreenshotsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadScreenshots() {
+      try {
+        const res = await fetch('/api/swipe-quiz/fetch-screenshots', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entryUrl: funnel.entry_url,
+            funnelName: funnel.funnel_name,
+          }),
+        });
+        if (!res.ok) throw new Error('fetch failed');
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.success && data.steps) {
+          const map: Record<string, string> = {};
+          for (const s of data.steps) {
+            if (s.url) map[s.url] = s.screenshotBase64;
+            if (s.stepIndex != null) map[`idx:${s.stepIndex}`] = s.screenshotBase64;
+          }
+          setScreenshots(map);
+        }
+      } catch {
+        // Screenshots not available — fallback UI will show
+      } finally {
+        if (!cancelled) setScreenshotsLoading(false);
+      }
+    }
+    loadScreenshots();
+    return () => { cancelled = true; };
+  }, [funnel.entry_url, funnel.funnel_name]);
 
   /* ── Drag state in refs so handlers read instantly ── */
   const dragRef = useRef<{
@@ -352,6 +377,17 @@ export default function FunnelFlowView({ funnel, onClose }: FunnelFlowViewProps)
                   <span className="text-[11px] text-slate-400">{funnel.brand_name}</span>
                 </>
               )}
+              <span className="text-slate-300">&middot;</span>
+              <a
+                href={funnel.entry_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[11px] text-amber-600 hover:text-amber-500 transition-colors truncate max-w-[260px]"
+                title={funnel.entry_url}
+              >
+                <ExternalLink className="h-3 w-3 shrink-0" />
+                <span className="truncate">{funnel.entry_url.replace(/^https?:\/\//, '')}</span>
+              </a>
             </div>
           </div>
         </div>
@@ -476,8 +512,16 @@ export default function FunnelFlowView({ funnel, onClose }: FunnelFlowViewProps)
                     style={{ height: 130 }}
                     onClick={() => setSelectedStep(isSelected ? null : idx)}
                   >
-                    {step.url ? (
-                      <IframePreview url={step.url} title={step.title || `Step ${stepIdx}`} />
+                    {screenshotsLoading ? (
+                      <div className="flex flex-col items-center justify-center h-full bg-slate-50/80">
+                        <Loader2 className="h-4 w-4 text-slate-300 animate-spin" />
+                      </div>
+                    ) : step.url ? (
+                      <StepPreview
+                        url={step.url}
+                        title={step.title || `Step ${stepIdx}`}
+                        screenshotBase64={screenshots[step.url] || screenshots[`idx:${stepIdx}`]}
+                      />
                     ) : (
                       <div className="flex flex-col items-center justify-center h-full bg-slate-50">
                         <Globe className="h-5 w-5 text-slate-200" />
@@ -487,17 +531,32 @@ export default function FunnelFlowView({ funnel, onClose }: FunnelFlowViewProps)
                   </div>
 
                   {/* Footer */}
-                  <div className="px-2.5 py-1.5 border-t border-slate-100 bg-slate-50/50">
-                    {step.step_type && (
-                      <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium" style={{ backgroundColor: colors.bg, color: colors.text }}>
-                        {step.step_type.replace(/_/g, ' ')}
-                      </span>
-                    )}
-                    {step.cta_text && (
-                      <span className="ml-1 inline-flex items-center gap-0.5 text-[9px] text-emerald-600">
-                        <Zap className="h-2 w-2" />
-                        {step.cta_text}
-                      </span>
+                  <div className="px-2.5 py-1.5 border-t border-slate-100 bg-slate-50/50 space-y-1">
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {step.step_type && (
+                        <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium" style={{ backgroundColor: colors.bg, color: colors.text }}>
+                          {step.step_type.replace(/_/g, ' ')}
+                        </span>
+                      )}
+                      {step.cta_text && (
+                        <span className="inline-flex items-center gap-0.5 text-[9px] text-emerald-600">
+                          <Zap className="h-2 w-2" />
+                          {step.cta_text}
+                        </span>
+                      )}
+                    </div>
+                    {step.url && (
+                      <a
+                        href={step.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-[8px] text-amber-600 hover:text-amber-500 transition-colors truncate"
+                        title={step.url}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Link2 className="h-2.5 w-2.5 shrink-0" />
+                        <span className="truncate">{step.url.replace(/^https?:\/\//, '')}</span>
+                      </a>
                     )}
                   </div>
                 </div>
@@ -569,19 +628,33 @@ export default function FunnelFlowView({ funnel, onClose }: FunnelFlowViewProps)
       {selectedStep !== null && steps[selectedStep] && (() => {
         const s = steps[selectedStep];
         const c = STEP_COLORS[s.step_type ?? 'other'] ?? STEP_COLORS.other;
+        const stepIdx = s.step_index ?? selectedStep + 1;
+        const stepScreenshot = s.url ? (screenshots[s.url] || screenshots[`idx:${stepIdx}`]) : undefined;
         return (
-          <div className="absolute top-14 right-4 w-72 bg-white rounded-xl border border-slate-200 shadow-xl z-40 overflow-hidden">
+          <div className="absolute top-14 right-4 w-80 bg-white rounded-xl border border-slate-200 shadow-xl z-40 overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100" style={{ backgroundColor: c.bg }}>
-              <div className="flex items-center gap-2">
-                <div className="flex h-5 w-5 items-center justify-center rounded-full text-white text-[10px] font-bold" style={{ backgroundColor: c.dot }}>
-                  {s.step_index ?? selectedStep + 1}
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white text-[10px] font-bold" style={{ backgroundColor: c.dot }}>
+                  {stepIdx}
                 </div>
-                <span className="text-xs font-bold text-slate-700">{s.title || 'Senza titolo'}</span>
+                <span className="text-xs font-bold text-slate-700 truncate">{s.title || 'Senza titolo'}</span>
               </div>
-              <button onClick={() => setSelectedStep(null)} className="p-0.5 rounded text-slate-400 hover:text-slate-700 transition-colors">
+              <button onClick={() => setSelectedStep(null)} className="p-0.5 rounded text-slate-400 hover:text-slate-700 transition-colors shrink-0">
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
+
+            {/* Screenshot preview in detail panel */}
+            {stepScreenshot && (
+              <div className="border-b border-slate-100">
+                <img
+                  src={`data:image/png;base64,${stepScreenshot}`}
+                  alt={s.title || `Step ${stepIdx}`}
+                  className="w-full h-40 object-cover object-top"
+                />
+              </div>
+            )}
+
             <div className="p-3 space-y-2 max-h-60 overflow-y-auto">
               {s.step_type && (
                 <span className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: c.bg, color: c.text }}>
@@ -606,10 +679,18 @@ export default function FunnelFlowView({ funnel, onClose }: FunnelFlowViewProps)
                 </div>
               )}
               {s.url && (
-                <a href={s.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[11px] text-amber-600 hover:text-amber-500">
-                  <ExternalLink className="h-3 w-3" />
-                  Apri pagina originale
-                </a>
+                <div className="rounded-lg bg-amber-50/60 border border-amber-200/50 p-2">
+                  <a
+                    href={s.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-[11px] text-amber-700 hover:text-amber-500 font-medium transition-colors"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                    Apri pagina originale
+                  </a>
+                  <p className="mt-1 text-[9px] text-amber-600/70 break-all leading-relaxed">{s.url}</p>
+                </div>
               )}
             </div>
           </div>
