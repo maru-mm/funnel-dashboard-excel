@@ -18,7 +18,9 @@ import {
   Wand2,
   ChevronDown,
   ChevronUp,
+  Paintbrush,
 } from 'lucide-react';
+import VisualHtmlEditor from '@/components/VisualHtmlEditor';
 
 interface ProductInfo {
   name: string;
@@ -66,6 +68,7 @@ export default function CloneLandingPage() {
   const [product, setProduct] = useState<ProductInfo>(defaultProduct);
   const [tone, setTone] = useState<'professional' | 'friendly' | 'urgent' | 'luxury'>('professional');
   const [language, setLanguage] = useState<'it' | 'en'>('it');
+  const [showEditor, setShowEditor] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const handleClone = async () => {
@@ -573,6 +576,14 @@ export default function CloneLandingPage() {
 
                 {/* Actions */}
                 <button
+                  onClick={() => setShowEditor(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors shadow-sm"
+                  title="Modifica Visivamente"
+                >
+                  <Paintbrush className="w-4 h-4" />
+                  Modifica
+                </button>
+                <button
                   onClick={handleCopyCode}
                   className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors"
                   title="Copia HTML"
@@ -630,7 +641,7 @@ export default function CloneLandingPage() {
 
         {/* Instructions */}
         {!result && !isLoading && !error && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div className="bg-purple-50 border border-purple-200 rounded-xl p-6">
               <div className="flex items-center gap-3 mb-4">
                 <div className="bg-purple-100 p-2 rounded-lg">
@@ -655,20 +666,44 @@ export default function CloneLandingPage() {
               </p>
             </div>
 
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="bg-amber-100 p-2 rounded-lg">
+                  <Paintbrush className="w-5 h-5 text-amber-600" />
+                </div>
+                <h3 className="font-semibold text-amber-900">3. Modifica</h3>
+              </div>
+              <p className="text-amber-800 text-sm">
+                Usa l&apos;editor visuale per personalizzare testi, immagini, colori e layout.
+              </p>
+            </div>
+
             <div className="bg-green-50 border border-green-200 rounded-xl p-6">
               <div className="flex items-center gap-3 mb-4">
                 <div className="bg-green-100 p-2 rounded-lg">
                   <Download className="w-5 h-5 text-green-600" />
                 </div>
-                <h3 className="font-semibold text-green-900">3. Usa</h3>
+                <h3 className="font-semibold text-green-900">4. Usa</h3>
               </div>
               <p className="text-green-800 text-sm">
-                Visualizza il risultato in anteprima, scarica l&apos;HTML e usalo per il tuo business.
+                Scarica l&apos;HTML finale e usalo per il tuo business.
               </p>
             </div>
           </div>
         )}
       </div>
+
+      {/* Visual HTML Editor */}
+      {showEditor && result?.html && (
+        <VisualHtmlEditor
+          initialHtml={result.html}
+          pageTitle={result.isSwipedVersion ? `Landing Swipata - ${product.brand_name || 'Custom'}` : 'Landing Clonata'}
+          onSave={(html) => {
+            setResult({ ...result, html });
+          }}
+          onClose={() => setShowEditor(false)}
+        />
+      )}
     </div>
   );
 }

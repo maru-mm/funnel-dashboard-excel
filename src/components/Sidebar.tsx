@@ -16,6 +16,7 @@ import {
   MessageSquare,
   HelpCircle,
   Wand2,
+  FlipVertical,
 } from 'lucide-react';
 
 const menuItems = [
@@ -48,6 +49,11 @@ const menuItems = [
     name: 'My Funnels',
     href: '/my-funnels',
     icon: GitBranch,
+  },
+  {
+    name: 'Reverse Funnel',
+    href: '/reverse-funnel',
+    icon: FlipVertical,
   },
   {
     name: 'Front End Funnel',

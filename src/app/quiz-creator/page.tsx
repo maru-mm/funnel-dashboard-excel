@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Header from '@/components/Header';
 import { fetchAffiliateSavedFunnels } from '@/lib/supabase-operations';
 import type { AffiliateSavedFunnel } from '@/types/database';
@@ -39,7 +40,61 @@ import {
   Link,
   Clock,
   Settings2,
+  Tag,
+  FileStack,
+  Lightbulb,
+  Filter,
+  Calendar,
 } from 'lucide-react';
+
+// ─── FUNNEL LABELS & COLORS ──────────────────────────────────────────────────
+
+const FUNNEL_TYPE_LABELS: Record<string, string> = {
+  quiz_funnel: 'Quiz Funnel',
+  sales_funnel: 'Sales Funnel',
+  landing_page: 'Landing Page',
+  webinar_funnel: 'Webinar Funnel',
+  tripwire_funnel: 'Tripwire Funnel',
+  lead_magnet: 'Lead Magnet',
+  vsl_funnel: 'VSL Funnel',
+  other: 'Altro',
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  weight_loss: 'Weight Loss',
+  supplements: 'Supplements',
+  skincare: 'Skincare',
+  fitness: 'Fitness',
+  finance: 'Finance',
+  saas: 'SaaS',
+  ecommerce: 'E-commerce',
+  health: 'Health',
+  education: 'Education',
+  other: 'Altro',
+};
+
+const FUNNEL_TYPE_COLORS: Record<string, string> = {
+  quiz_funnel: 'bg-violet-100 text-violet-800',
+  sales_funnel: 'bg-emerald-100 text-emerald-800',
+  landing_page: 'bg-sky-100 text-sky-800',
+  webinar_funnel: 'bg-rose-100 text-rose-800',
+  tripwire_funnel: 'bg-amber-100 text-amber-800',
+  lead_magnet: 'bg-teal-100 text-teal-800',
+  vsl_funnel: 'bg-orange-100 text-orange-800',
+  other: 'bg-slate-100 text-slate-700',
+};
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('it-IT', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return iso;
+  }
+}
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 
@@ -535,8 +590,15 @@ function SwipedAnalysisDisplay({ swiped, original }: { swiped: AnalysisResult; o
 // ─── MAIN PAGE ───────────────────────────────────────────────────────────────
 
 export default function QuizCreatorPage() {
+  const searchParams = useSearchParams();
   const [url, setUrl] = useState('');
   const [screenshotDelay, setScreenshotDelay] = useState<number>(0);
+
+  // Auto-fill URL from query params (e.g. from My Funnels "Swipe" button)
+  useEffect(() => {
+    const urlParam = searchParams.get('url');
+    if (urlParam) setUrl(urlParam);
+  }, [searchParams]);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ApiResponse | null>(null);
@@ -570,6 +632,8 @@ export default function QuizCreatorPage() {
   const [funnelsExpanded, setFunnelsExpanded] = useState(true);
   const [expandedFunnelId, setExpandedFunnelId] = useState<string | null>(null);
   const [funnelSearch, setFunnelSearch] = useState('');
+  const [funnelFilterType, setFunnelFilterType] = useState<string>('all');
+  const [funnelFilterCategory, setFunnelFilterCategory] = useState<string>('all');
 
   // Load saved funnels on mount
   useEffect(() => {
@@ -587,19 +651,35 @@ export default function QuizCreatorPage() {
     loadFunnels();
   }, []);
 
-  // Filter funnels by search
+  // Unique types & categories for filters
+  const funnelUniqueTypes = useMemo(() => {
+    const set = new Set(savedFunnels.map((f) => f.funnel_type));
+    return Array.from(set).sort();
+  }, [savedFunnels]);
+
+  const funnelUniqueCategories = useMemo(() => {
+    const set = new Set(savedFunnels.map((f) => f.category));
+    return Array.from(set).sort();
+  }, [savedFunnels]);
+
+  // Filter funnels by search + type + category
   const filteredFunnels = useMemo(() => {
-    if (!funnelSearch.trim()) return savedFunnels;
-    const q = funnelSearch.toLowerCase();
-    return savedFunnels.filter(
-      (f) =>
-        f.funnel_name?.toLowerCase().includes(q) ||
-        f.brand_name?.toLowerCase().includes(q) ||
-        f.entry_url?.toLowerCase().includes(q) ||
-        f.category?.toLowerCase().includes(q) ||
-        f.funnel_type?.toLowerCase().includes(q)
-    );
-  }, [savedFunnels, funnelSearch]);
+    return savedFunnels.filter((f) => {
+      if (funnelFilterType !== 'all' && f.funnel_type !== funnelFilterType) return false;
+      if (funnelFilterCategory !== 'all' && f.category !== funnelFilterCategory) return false;
+      if (funnelSearch.trim()) {
+        const q = funnelSearch.toLowerCase();
+        const matchName = f.funnel_name?.toLowerCase().includes(q);
+        const matchBrand = f.brand_name?.toLowerCase().includes(q);
+        const matchUrl = f.entry_url?.toLowerCase().includes(q);
+        const matchCategory = f.category?.toLowerCase().includes(q);
+        const matchType = f.funnel_type?.toLowerCase().includes(q);
+        const matchTags = f.tags?.some((t) => t.toLowerCase().includes(q));
+        if (!matchName && !matchBrand && !matchUrl && !matchCategory && !matchType && !matchTags) return false;
+      }
+      return true;
+    });
+  }, [savedFunnels, funnelSearch, funnelFilterType, funnelFilterCategory]);
 
   // Select a step URL -> auto-fill the analysis input
   const selectStepUrl = (stepUrl: string) => {
@@ -944,7 +1024,7 @@ export default function QuizCreatorPage() {
           )}
         </div>
 
-        {/* ═══ SAVED FUNNELS SECTION ═══ */}
+        {/* ═══ SELEZIONA TEMPLATE (ALL MY FUNNELS) ═══ */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
           <button
             onClick={() => setFunnelsExpanded(!funnelsExpanded)}
@@ -952,71 +1032,167 @@ export default function QuizCreatorPage() {
           >
             <div className="flex items-center gap-2.5">
               <FolderOpen className="w-5 h-5 text-indigo-500" />
-              <h3 className="font-semibold text-gray-900">I Miei Quiz Salvati</h3>
+              <h3 className="font-semibold text-gray-900">Seleziona Template</h3>
               <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs font-bold rounded-full">
                 {savedFunnels.length}
               </span>
+              {filteredFunnels.length !== savedFunnels.length && (
+                <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">
+                  {filteredFunnels.length} filtrati
+                </span>
+              )}
             </div>
             {funnelsExpanded ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
           </button>
 
           {funnelsExpanded && (
             <div className="border-t border-gray-100">
-              {/* Search */}
-              <div className="px-6 py-3 bg-gray-50 border-b border-gray-100">
+              {/* Search + Filters */}
+              <div className="px-6 py-3 bg-gray-50 border-b border-gray-100 space-y-3">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <input
                     type="text"
                     value={funnelSearch}
                     onChange={(e) => setFunnelSearch(e.target.value)}
-                    placeholder="Cerca per nome, brand, URL, categoria..."
+                    placeholder="Cerca per nome, brand, URL, tag..."
                     className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
                   />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Filter className="w-4 h-4 text-gray-400" />
+                  <select
+                    value={funnelFilterType}
+                    onChange={(e) => setFunnelFilterType(e.target.value)}
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200 outline-none"
+                  >
+                    <option value="all">Tutti i tipi</option>
+                    {funnelUniqueTypes.map((t) => (
+                      <option key={t} value={t}>
+                        {FUNNEL_TYPE_LABELS[t] ?? t}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={funnelFilterCategory}
+                    onChange={(e) => setFunnelFilterCategory(e.target.value)}
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200 outline-none"
+                  >
+                    <option value="all">Tutte le categorie</option>
+                    {funnelUniqueCategories.map((c) => (
+                      <option key={c} value={c}>
+                        {CATEGORY_LABELS[c] ?? c}
+                      </option>
+                    ))}
+                  </select>
+                  {(funnelFilterType !== 'all' || funnelFilterCategory !== 'all' || funnelSearch) && (
+                    <button
+                      onClick={() => {
+                        setFunnelFilterType('all');
+                        setFunnelFilterCategory('all');
+                        setFunnelSearch('');
+                      }}
+                      className="text-xs text-gray-500 hover:text-indigo-600 underline ml-1"
+                    >
+                      Reset filtri
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Funnels List */}
-              <div className="max-h-[420px] overflow-y-auto">
+              <div className="max-h-[520px] overflow-y-auto">
                 {funnelsLoading ? (
                   <div className="flex items-center justify-center py-10">
                     <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
-                    <span className="ml-2 text-gray-500 text-sm">Caricamento quiz salvati...</span>
+                    <span className="ml-2 text-gray-500 text-sm">Caricamento template salvati...</span>
                   </div>
                 ) : filteredFunnels.length === 0 ? (
                   <div className="py-10 text-center text-gray-400 text-sm">
-                    {funnelSearch ? 'Nessun risultato trovato.' : 'Nessun quiz salvato.'}
+                    {funnelSearch || funnelFilterType !== 'all' || funnelFilterCategory !== 'all'
+                      ? 'Nessun risultato trovato. Prova a modificare i filtri.'
+                      : 'Nessun funnel salvato. Usa l\'Affiliate Browser Chat per analizzare e salvare funnel.'}
                   </div>
                 ) : (
                   <div className="divide-y divide-gray-100">
                     {filteredFunnels.map((funnel) => {
                       const steps = Array.isArray(funnel.steps) ? (funnel.steps as unknown as FunnelStep[]) : [];
                       const isExpanded = expandedFunnelId === funnel.id;
-                      const funnelTypeLabel = funnel.funnel_type?.replace(/_/g, ' ') || 'other';
-                      const isQuiz = funnel.funnel_type?.toLowerCase().includes('quiz') ||
-                        steps.some((s) => s.step_type === 'quiz_question' || s.step_type === 'info_screen');
+                      const typeColor = FUNNEL_TYPE_COLORS[funnel.funnel_type] ?? FUNNEL_TYPE_COLORS.other;
 
                       return (
                         <div key={funnel.id} className="group">
                           {/* Funnel Header */}
                           <div
-                            className="flex items-center gap-3 px-6 py-3.5 hover:bg-indigo-50/50 cursor-pointer transition-colors"
+                            className="flex items-start gap-3 px-6 py-3.5 hover:bg-indigo-50/50 cursor-pointer transition-colors"
                             onClick={() => setExpandedFunnelId(isExpanded ? null : funnel.id)}
                           >
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <p className="font-medium text-gray-900 text-sm truncate">{funnel.funnel_name}</p>
-                                {isQuiz && (
-                                  <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-bold rounded uppercase shrink-0">Quiz</span>
-                                )}
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${typeColor}`}>
+                                  {FUNNEL_TYPE_LABELS[funnel.funnel_type] ?? funnel.funnel_type}
+                                </span>
+                                <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
+                                  {CATEGORY_LABELS[funnel.category] ?? funnel.category}
+                                </span>
                               </div>
-                              <div className="flex items-center gap-3 mt-0.5">
+                              <div className="flex items-center gap-3 mt-1">
                                 {funnel.brand_name && (
                                   <span className="text-xs text-gray-500">{funnel.brand_name}</span>
                                 )}
-                                <span className="text-xs text-gray-400 capitalize">{funnelTypeLabel}</span>
-                                <span className="text-xs text-gray-400">{steps.length} step{steps.length !== 1 ? 's' : ''}</span>
+                                <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                                  <FileStack className="w-3 h-3" />
+                                  {funnel.total_steps ?? steps.length} step
+                                </span>
+                                <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                                  <Calendar className="w-3 h-3" />
+                                  {formatDate(funnel.created_at)}
+                                </span>
                               </div>
+                              {/* Tags */}
+                              {funnel.tags && funnel.tags.length > 0 && (
+                                <div className="mt-1.5 flex flex-wrap gap-1">
+                                  {funnel.tags.slice(0, 4).map((tag, i) => (
+                                    <span
+                                      key={i}
+                                      className="inline-flex items-center gap-0.5 rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700 border border-indigo-200/60"
+                                    >
+                                      <Tag className="h-2.5 w-2.5" />
+                                      {tag}
+                                    </span>
+                                  ))}
+                                  {funnel.tags.length > 4 && (
+                                    <span className="text-[10px] text-gray-400">+{funnel.tags.length - 4}</span>
+                                  )}
+                                </div>
+                              )}
+                              {/* Persuasion techniques */}
+                              {funnel.persuasion_techniques && funnel.persuasion_techniques.length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {funnel.persuasion_techniques.slice(0, 3).map((tech, i) => (
+                                    <span
+                                      key={i}
+                                      className="inline-flex items-center gap-0.5 rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] text-violet-700 border border-violet-200/60"
+                                    >
+                                      <Lightbulb className="h-2.5 w-2.5" />
+                                      {tech}
+                                    </span>
+                                  ))}
+                                  {funnel.persuasion_techniques.length > 3 && (
+                                    <span className="text-[10px] text-gray-400">
+                                      +{funnel.persuasion_techniques.length - 3}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {/* Analysis summary */}
+                              {funnel.analysis_summary && (
+                                <p className="mt-1.5 text-[11px] text-gray-500 leading-relaxed line-clamp-2">
+                                  <Sparkles className="h-3 w-3 inline mr-0.5 text-indigo-400" />
+                                  {funnel.analysis_summary}
+                                </p>
+                              )}
                             </div>
 
                             {/* Quick-select entry URL */}
@@ -1029,7 +1205,7 @@ export default function QuizCreatorPage() {
                               Usa Entry URL
                             </button>
 
-                            <div className={`shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                            <div className={`shrink-0 mt-1 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
                               <ChevronDown className="w-4 h-4 text-gray-400" />
                             </div>
                           </div>
@@ -1064,6 +1240,10 @@ export default function QuizCreatorPage() {
                                         step.step_type === 'info_screen' ? 'bg-blue-100 text-blue-600' :
                                         step.step_type === 'results' ? 'bg-green-100 text-green-600' :
                                         step.step_type === 'lead_capture' ? 'bg-amber-100 text-amber-600' :
+                                        step.step_type === 'checkout' ? 'bg-emerald-100 text-emerald-600' :
+                                        step.step_type === 'upsell' ? 'bg-orange-100 text-orange-600' :
+                                        step.step_type === 'thank_you' ? 'bg-green-100 text-green-600' :
+                                        step.step_type === 'landing' ? 'bg-blue-100 text-blue-600' :
                                         'bg-gray-100 text-gray-500'
                                       }`}>
                                         {step.step_type.replace(/_/g, ' ')}

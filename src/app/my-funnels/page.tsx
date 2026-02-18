@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import Header from '@/components/Header';
-import { fetchAffiliateSavedFunnels, deleteAffiliateSavedFunnel } from '@/lib/supabase-operations';
+import FunnelFlowView from '@/components/FunnelFlowView';
+import { fetchAffiliateSavedFunnels, deleteAffiliateSavedFunnel, createAffiliateSavedFunnel } from '@/lib/supabase-operations';
 import type { AffiliateSavedFunnel, Json } from '@/types/database';
 import {
   Filter,
@@ -32,6 +33,10 @@ import {
   MousePointerClick,
   ClipboardList,
   ListChecks,
+  Repeat,
+  Workflow,
+  Save,
+  Plus,
 } from 'lucide-react';
 
 /* ───────── helpers ───────── */
@@ -130,6 +135,7 @@ export default function MyFunnelsPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [detailFunnel, setDetailFunnel] = useState<AffiliateSavedFunnel | null>(null);
+  const [flowFunnel, setFlowFunnel] = useState<AffiliateSavedFunnel | null>(null);
 
   /* ── Tabs ── */
   const [activeTab, setActiveTab] = useState<TabId>('all');
@@ -358,6 +364,114 @@ export default function MyFunnelsPage() {
       setDeletingId(null);
     }
   };
+
+  /* ═══════════ Save-as-new-funnel modal state ═══════════ */
+
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveForm, setSaveForm] = useState({
+    funnel_name: '',
+    funnel_type: 'quiz_funnel',
+    category: 'other',
+    brand_name: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+
+  const collectedSteps = useMemo<SavedFunnelStep[]>(() => {
+    const result: SavedFunnelStep[] = [];
+
+    for (const fid of selectedFunnelIds) {
+      const funnel = funnels.find((f) => f.id === fid);
+      if (!funnel) continue;
+      const steps = parseSteps(funnel.steps);
+      result.push(...steps);
+    }
+
+    for (const [fid, indices] of selectedPages) {
+      const funnel = funnels.find((f) => f.id === fid);
+      if (!funnel) continue;
+      const steps = parseSteps(funnel.steps);
+      for (const idx of indices) {
+        const step = steps.find((s) => s.step_index === idx);
+        if (step) result.push(step);
+      }
+    }
+
+    return result.map((s, i) => ({ ...s, step_index: i + 1 }));
+  }, [selectedFunnelIds, selectedPages, funnels]);
+
+  const openSaveModal = useCallback(() => {
+    const firstSourceFunnel =
+      (selectedFunnelIds.size > 0
+        ? funnels.find((f) => f.id === [...selectedFunnelIds][0])
+        : null) ??
+      (selectedPages.size > 0
+        ? funnels.find((f) => f.id === [...selectedPages.keys()][0])
+        : null);
+
+    setSaveForm({
+      funnel_name: '',
+      funnel_type: firstSourceFunnel?.funnel_type ?? 'quiz_funnel',
+      category: firstSourceFunnel?.category ?? 'other',
+      brand_name: firstSourceFunnel?.brand_name ?? '',
+    });
+    setSaveSuccess(null);
+    setShowSaveModal(true);
+  }, [selectedFunnelIds, selectedPages, funnels]);
+
+  const handleSaveAsNewFunnel = useCallback(async () => {
+    if (!saveForm.funnel_name.trim() || collectedSteps.length === 0) return;
+    setSaving(true);
+    setSaveSuccess(null);
+    try {
+      const entryUrl = collectedSteps[0]?.url || '';
+      const tags = [...new Set(
+        [...selectedFunnelIds, ...selectedPages.keys()]
+          .map((fid) => funnels.find((f) => f.id === fid))
+          .filter(Boolean)
+          .flatMap((f) => f!.tags),
+      )];
+      const persuasion = [...new Set(
+        [...selectedFunnelIds, ...selectedPages.keys()]
+          .map((fid) => funnels.find((f) => f.id === fid))
+          .filter(Boolean)
+          .flatMap((f) => f!.persuasion_techniques),
+      )];
+      const notableElements = [...new Set(
+        [...selectedFunnelIds, ...selectedPages.keys()]
+          .map((fid) => funnels.find((f) => f.id === fid))
+          .filter(Boolean)
+          .flatMap((f) => f!.notable_elements),
+      )];
+
+      const newFunnel = await createAffiliateSavedFunnel({
+        funnel_name: saveForm.funnel_name.trim(),
+        funnel_type: saveForm.funnel_type,
+        category: saveForm.category,
+        brand_name: saveForm.brand_name.trim() || null,
+        entry_url: entryUrl,
+        total_steps: collectedSteps.length,
+        steps: collectedSteps as unknown as import('@/types/database').Json,
+        tags,
+        persuasion_techniques: persuasion,
+        notable_elements: notableElements,
+        analysis_summary: `Funnel composto da ${collectedSteps.length} step selezionati manualmente.`,
+        raw_agent_result: 'manually_composed',
+      });
+
+      setFunnels((prev) => [newFunnel, ...prev]);
+      clearSelection();
+      setSaveSuccess(newFunnel.funnel_name);
+      setTimeout(() => {
+        setShowSaveModal(false);
+        setSaveSuccess(null);
+      }, 1500);
+    } catch (err) {
+      setError((err as Error)?.message ?? 'Errore durante il salvataggio');
+    } finally {
+      setSaving(false);
+    }
+  }, [saveForm, collectedSteps, selectedFunnelIds, selectedPages, funnels, clearSelection]);
 
   const TABS: { id: TabId; label: string; count: number; icon: typeof Target }[] = [
     { id: 'all', label: 'Tutti i Funnel', count: allCount, icon: Target },
@@ -723,6 +837,21 @@ export default function MyFunnelsPage() {
                         <Eye className="h-4 w-4" />
                         Dettagli
                       </button>
+                      <a
+                        href={`/quiz-creator?url=${encodeURIComponent(funnel.entry_url)}`}
+                        className="flex items-center gap-1 text-sm font-medium text-emerald-600 hover:text-emerald-700"
+                      >
+                        <Repeat className="h-4 w-4" />
+                        Swipe
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setFlowFunnel(funnel)}
+                        className="flex items-center gap-1 text-sm font-medium text-violet-600 hover:text-violet-700"
+                      >
+                        <Workflow className="h-4 w-4" />
+                        Vista Funnel
+                      </button>
                     </div>
                     <button
                       type="button"
@@ -905,18 +1034,163 @@ export default function MyFunnelsPage() {
                   <button
                     type="button"
                     className="rounded-xl bg-amber-500 px-5 py-2 text-sm font-bold text-white shadow-md hover:bg-amber-400 transition-colors flex items-center gap-2"
-                    onClick={() => {
-                      console.log('Selected items:', selectedItems);
-                    }}
+                    onClick={openSaveModal}
                   >
-                    <Zap className="h-4 w-4" />
-                    Usa selezione
+                    <Save className="h-4 w-4" />
+                    Salva come nuovo funnel
                   </button>
                 </div>
               </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* ══════ Save as New Funnel Modal ══════ */}
+      {showSaveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-amber-50 to-orange-50 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/20">
+                  <Plus className="h-5 w-5 text-amber-700" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800">Salva come nuovo funnel</h3>
+                  <p className="text-xs text-slate-500">
+                    {collectedSteps.length} step selezionat{collectedSteps.length === 1 ? 'o' : 'i'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSaveModal(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {saveSuccess ? (
+                <div className="flex flex-col items-center py-6">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-100">
+                    <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+                  </div>
+                  <p className="mt-3 text-lg font-bold text-slate-800">Funnel salvato!</p>
+                  <p className="mt-1 text-sm text-slate-500">&ldquo;{saveSuccess}&rdquo; creato con successo</p>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                      Nome del funnel <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={saveForm.funnel_name}
+                      onChange={(e) => setSaveForm((p) => ({ ...p, funnel_name: e.target.value }))}
+                      placeholder="Es. Il mio quiz funnel personalizzato"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-amber-400 focus:ring-2 focus:ring-amber-200 outline-none"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">Tipo funnel</label>
+                      <select
+                        value={saveForm.funnel_type}
+                        onChange={(e) => setSaveForm((p) => ({ ...p, funnel_type: e.target.value }))}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-amber-400 focus:ring-2 focus:ring-amber-200 outline-none"
+                      >
+                        {Object.entries(FUNNEL_TYPE_LABELS).map(([val, label]) => (
+                          <option key={val} value={val}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">Categoria</label>
+                      <select
+                        value={saveForm.category}
+                        onChange={(e) => setSaveForm((p) => ({ ...p, category: e.target.value }))}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-amber-400 focus:ring-2 focus:ring-amber-200 outline-none"
+                      >
+                        {Object.entries(CATEGORY_LABELS).map(([val, label]) => (
+                          <option key={val} value={val}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">Brand (opzionale)</label>
+                    <input
+                      type="text"
+                      value={saveForm.brand_name}
+                      onChange={(e) => setSaveForm((p) => ({ ...p, brand_name: e.target.value }))}
+                      placeholder="Es. NomeBrand"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-amber-400 focus:ring-2 focus:ring-amber-200 outline-none"
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold text-slate-600 mb-2 flex items-center gap-1.5">
+                      <FileStack className="h-3.5 w-3.5 text-amber-500" />
+                      Anteprima step ({collectedSteps.length})
+                    </p>
+                    <div className="max-h-40 overflow-y-auto space-y-1">
+                      {collectedSteps.map((step) => {
+                        const stepColor = STEP_TYPE_COLORS[step.step_type ?? 'other'] ?? STEP_TYPE_COLORS.other;
+                        return (
+                          <div key={step.step_index} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-100">
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-700">
+                              {step.step_index}
+                            </span>
+                            <span className="text-xs text-slate-700 truncate flex-1">{step.title || 'Senza titolo'}</span>
+                            {step.step_type && (
+                              <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${stepColor}`}>
+                                {step.step_type.replace(/_/g, ' ')}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowSaveModal(false)}
+                      className="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+                    >
+                      Annulla
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveAsNewFunnel}
+                      disabled={saving || !saveForm.funnel_name.trim()}
+                      className="rounded-xl bg-amber-500 px-6 py-2.5 text-sm font-bold text-white shadow-md hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                    >
+                      {saving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
+                      {saving ? 'Salvataggio...' : 'Salva funnel'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════ Flow View Modal ══════ */}
+      {flowFunnel && (
+        <FunnelFlowView funnel={flowFunnel} onClose={() => setFlowFunnel(null)} />
       )}
 
       {/* ══════ Detail Modal ══════ */}
