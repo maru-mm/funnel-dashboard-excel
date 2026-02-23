@@ -13,7 +13,7 @@ import {
   BookmarkPlus, Library, Tag, Clock, FileCode, Search,
   BookOpen, ArrowDownToLine, Eye as EyeIcon,
 } from 'lucide-react';
-import { SavedSection, SECTION_TYPE_OPTIONS } from '@/types';
+import { SavedSection, SECTION_TYPE_OPTIONS, OUTPUT_STACK_OPTIONS, type OutputStack } from '@/types';
 
 /* ─────────── Types ─────────── */
 
@@ -353,6 +353,8 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
   const [saveSectionTags, setSaveSectionTags] = useState('');
   const [saveSectionAiRewrite, setSaveSectionAiRewrite] = useState(false);
   const [saveSectionModel, setSaveSectionModel] = useState<'claude' | 'gemini'>('claude');
+  const [saveSectionStack, setSaveSectionStack] = useState<OutputStack>('pure_css');
+  const [saveSectionCustomInstructions, setSaveSectionCustomInstructions] = useState('');
   const [saveSectionRunning, setSaveSectionRunning] = useState(false);
   const [saveSectionError, setSaveSectionError] = useState('');
   const [saveSectionSuccess, setSaveSectionSuccess] = useState(false);
@@ -462,6 +464,8 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
     setSaveSectionType('other');
     setSaveSectionTags('');
     setSaveSectionAiRewrite(false);
+    setSaveSectionStack('pure_css');
+    setSaveSectionCustomInstructions('');
     setSaveSectionError('');
     setSaveSectionSuccess(false);
   }, [sendToIframe]);
@@ -482,6 +486,8 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
             html: pendingSectionHtml,
             model: saveSectionModel,
             context: pageTitle || undefined,
+            outputStack: saveSectionStack,
+            customStackInstructions: saveSectionStack === 'custom' ? saveSectionCustomInstructions : undefined,
           }),
         });
         const data = await res.json();
@@ -498,6 +504,7 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
         textPreview: finalHtml.replace(/<[^>]*>/g, '').substring(0, 120).trim(),
         sourcePageTitle: pageTitle || undefined,
         aiRewritten: saveSectionAiRewrite,
+        outputStack: saveSectionAiRewrite ? saveSectionStack : undefined,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -515,7 +522,7 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
     } finally {
       setSaveSectionRunning(false);
     }
-  }, [pendingSectionHtml, saveSectionName, saveSectionType, saveSectionTags, saveSectionAiRewrite, saveSectionModel, savedSections, pageTitle]);
+  }, [pendingSectionHtml, saveSectionName, saveSectionType, saveSectionTags, saveSectionAiRewrite, saveSectionModel, saveSectionStack, saveSectionCustomInstructions, savedSections, pageTitle]);
 
   const handleDeleteSection = useCallback((id: string) => {
     const updated = savedSections.filter(s => s.id !== id);
@@ -1396,7 +1403,7 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-violet-800">Riscrivi con AI</p>
-                      <p className="text-[10px] text-violet-500">Rendi la sezione standalone con CSS scoped e pulizia completa</p>
+                      <p className="text-[10px] text-violet-500">Rendi la sezione standalone, pronta da condividere</p>
                     </div>
                   </div>
                   <div className="relative">
@@ -1412,22 +1419,82 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
                 </label>
 
                 {saveSectionAiRewrite && (
-                  <div className="mt-3 flex items-center gap-2">
-                    <span className="text-[10px] text-violet-500">Modello:</span>
-                    <div className="flex bg-white rounded-lg p-0.5 border border-violet-200">
-                      <button
-                        onClick={() => setSaveSectionModel('claude')}
-                        className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all ${
-                          saveSectionModel === 'claude' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-600'
-                        }`}
-                      >Claude</button>
-                      <button
-                        onClick={() => setSaveSectionModel('gemini')}
-                        className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all ${
-                          saveSectionModel === 'gemini' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-slate-600'
-                        }`}
-                      >Gemini</button>
+                  <div className="mt-3 space-y-3">
+                    {/* Model selector */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-violet-500 shrink-0">Modello:</span>
+                      <div className="flex bg-white rounded-lg p-0.5 border border-violet-200">
+                        <button
+                          onClick={() => setSaveSectionModel('claude')}
+                          className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all ${
+                            saveSectionModel === 'claude' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-600'
+                          }`}
+                        >Claude</button>
+                        <button
+                          onClick={() => setSaveSectionModel('gemini')}
+                          className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all ${
+                            saveSectionModel === 'gemini' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-slate-600'
+                          }`}
+                        >Gemini</button>
+                      </div>
                     </div>
+
+                    {/* Output Stack selector */}
+                    <div>
+                      <label className="text-[10px] font-bold text-violet-600 uppercase tracking-wider mb-1.5 block">Stack di Output</label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {OUTPUT_STACK_OPTIONS.map(opt => (
+                          <button
+                            key={opt.value}
+                            onClick={() => setSaveSectionStack(opt.value)}
+                            className={`flex flex-col items-start px-2.5 py-2 rounded-lg text-left transition-all border ${
+                              saveSectionStack === opt.value
+                                ? 'bg-violet-600 text-white border-violet-600 shadow-md shadow-violet-500/20'
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300 hover:bg-violet-50'
+                            }`}
+                          >
+                            <span className={`text-[11px] font-bold ${saveSectionStack === opt.value ? 'text-white' : 'text-slate-700'}`}>
+                              {opt.label}
+                            </span>
+                            <span className={`text-[9px] leading-tight mt-0.5 ${saveSectionStack === opt.value ? 'text-violet-200' : 'text-slate-400'}`}>
+                              {opt.description}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Custom instructions (only for 'custom' stack) */}
+                    {saveSectionStack === 'custom' && (
+                      <div>
+                        <label className="text-[10px] font-semibold text-violet-600 mb-1 block">Istruzioni personalizzate</label>
+                        <textarea
+                          value={saveSectionCustomInstructions}
+                          onChange={(e) => setSaveSectionCustomInstructions(e.target.value)}
+                          placeholder="Es: Usa solo HTML semantico con BEM naming, CSS custom properties, e Web Components nativi..."
+                          rows={3}
+                          className="w-full px-3 py-2 border border-violet-200 rounded-lg text-xs focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none resize-none"
+                        />
+                      </div>
+                    )}
+
+                    {/* Stack info hint */}
+                    {saveSectionStack === 'bootstrap' && (
+                      <div className="flex items-start gap-2 p-2 rounded-lg bg-blue-50 border border-blue-200">
+                        <FileCode className="h-3.5 w-3.5 text-blue-500 shrink-0 mt-0.5" />
+                        <p className="text-[10px] text-blue-600 leading-relaxed">
+                          L&apos;AI riscriverà la sezione usando classi Bootstrap 5 (.container, .row, .col-*, .btn, .card, ecc.) con JS vanilla per interattività. Pronta da incollare in qualsiasi progetto Bootstrap.
+                        </p>
+                      </div>
+                    )}
+                    {saveSectionStack === 'tailwind' && (
+                      <div className="flex items-start gap-2 p-2 rounded-lg bg-cyan-50 border border-cyan-200">
+                        <FileCode className="h-3.5 w-3.5 text-cyan-500 shrink-0 mt-0.5" />
+                        <p className="text-[10px] text-cyan-600 leading-relaxed">
+                          L&apos;AI userà utility classes Tailwind (flex, grid, p-*, text-*, bg-*, ecc.) senza tag &lt;style&gt; separato. Richiede Tailwind CSS nel progetto target.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1549,6 +1616,12 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
                               {section.aiRewritten && (
                                 <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded-full">
                                   <Sparkles className="h-2.5 w-2.5" />AI
+                                </span>
+                              )}
+                              {section.outputStack && section.outputStack !== 'pure_css' && (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full">
+                                  <FileCode className="h-2.5 w-2.5" />
+                                  {OUTPUT_STACK_OPTIONS.find(o => o.value === section.outputStack)?.label || section.outputStack}
                                 </span>
                               )}
                             </div>

@@ -765,6 +765,17 @@ export type BrandingGenerationStatus = 'idle' | 'generating' | 'completed' | 'fa
 // SAVED SECTIONS LIBRARY — Reusable section blocks
 // =====================================================
 
+export type OutputStack = 'pure_css' | 'bootstrap' | 'tailwind' | 'foundation' | 'bulma' | 'custom';
+
+export const OUTPUT_STACK_OPTIONS: { value: OutputStack; label: string; description: string }[] = [
+  { value: 'pure_css', label: 'CSS Puro', description: 'HTML + CSS vanilla, zero dipendenze' },
+  { value: 'bootstrap', label: 'Bootstrap 5', description: 'Classi Bootstrap 5 + JS vanilla' },
+  { value: 'tailwind', label: 'Tailwind CSS', description: 'Utility classes Tailwind' },
+  { value: 'foundation', label: 'Foundation 6', description: 'Grid e componenti Foundation' },
+  { value: 'bulma', label: 'Bulma', description: 'Classi Bulma CSS-only' },
+  { value: 'custom', label: 'Custom', description: 'Istruzioni personalizzate' },
+];
+
 export interface SavedSection {
   id: string;
   name: string;
@@ -780,6 +791,8 @@ export interface SavedSection {
   sourcePageTitle?: string;
   /** Whether AI has rewritten the section to be standalone */
   aiRewritten: boolean;
+  /** Tech stack used for the AI rewrite (bootstrap, tailwind, etc.) */
+  outputStack?: OutputStack;
   createdAt: string;
   updatedAt: string;
 }
