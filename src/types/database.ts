@@ -346,6 +346,40 @@ export interface Database {
           updated_at?: string;
         };
       };
+      saved_prompts: {
+        Row: {
+          id: string;
+          title: string;
+          content: string;
+          category: string;
+          tags: string[];
+          is_favorite: boolean;
+          use_count: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          title: string;
+          content: string;
+          category?: string;
+          tags?: string[];
+          is_favorite?: boolean;
+          use_count?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          title?: string;
+          content?: string;
+          category?: string;
+          tags?: string[];
+          is_favorite?: boolean;
+          use_count?: number;
+          updated_at?: string;
+        };
+      };
       scheduled_browser_jobs: {
         Row: {
           id: string;
@@ -448,3 +482,25 @@ export type AffiliateSavedFunnelUpdate = Database['public']['Tables']['affiliate
 export type ScheduledBrowserJob = Database['public']['Tables']['scheduled_browser_jobs']['Row'];
 export type ScheduledBrowserJobInsert = Database['public']['Tables']['scheduled_browser_jobs']['Insert'];
 export type ScheduledBrowserJobUpdate = Database['public']['Tables']['scheduled_browser_jobs']['Update'];
+
+export type SavedPrompt = Database['public']['Tables']['saved_prompts']['Row'];
+export type SavedPromptInsert = Database['public']['Tables']['saved_prompts']['Insert'];
+export type SavedPromptUpdate = Database['public']['Tables']['saved_prompts']['Update'];
+
+// Agentic Swipe types
+export interface AgenticSwipeInput {
+  url: string;
+  productName: string;
+  productDescription: string;
+  target?: string;
+  priceInfo?: string;
+  customInstructions?: string;
+  language?: string;
+}
+
+export interface AgenticSwipeResult {
+  html: string;
+  productAnalysis: Record<string, unknown>;
+  landingAnalysis: Record<string, unknown>;
+  croPlan: Record<string, unknown>;
+}

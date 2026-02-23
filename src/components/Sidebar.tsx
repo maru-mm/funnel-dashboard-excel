@@ -18,6 +18,10 @@ import {
   Wand2,
   FlipVertical,
   Copy,
+  Rocket,
+  BookOpen,
+  ShieldCheck,
+  Wand,
 } from 'lucide-react';
 
 const menuItems = [
@@ -87,9 +91,29 @@ const menuItems = [
     icon: HelpCircle,
   },
   {
+    name: 'Agentic Swipe',
+    href: '/agentic-swipe',
+    icon: Wand,
+  },
+  {
     name: 'Clone & Swipe',
     href: '/clone-landing',
     icon: Copy,
+  },
+  {
+    name: 'My Prompts',
+    href: '/prompts',
+    icon: BookOpen,
+  },
+  {
+    name: 'Deploy Funnel',
+    href: '/deploy-funnel',
+    icon: Rocket,
+  },
+  {
+    name: 'Compliance AI',
+    href: '/compliance-ai',
+    icon: ShieldCheck,
   },
 ];
 

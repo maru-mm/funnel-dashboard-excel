@@ -22,6 +22,9 @@ import type {
   ScheduledBrowserJob,
   ScheduledBrowserJobInsert,
   ScheduledBrowserJobUpdate,
+  SavedPrompt,
+  SavedPromptInsert,
+  SavedPromptUpdate,
 } from '@/types/database';
 
 // =====================================================
@@ -626,6 +629,94 @@ export async function deleteScheduledBrowserJob(id: string): Promise<void> {
 
 export async function toggleScheduledBrowserJob(id: string, isActive: boolean): Promise<ScheduledBrowserJob> {
   return updateScheduledBrowserJob(id, { is_active: isActive });
+}
+
+// =====================================================
+// SAVED PROMPTS OPERATIONS
+// =====================================================
+
+export async function fetchSavedPrompts(): Promise<SavedPrompt[]> {
+  const { data, error } = await supabase
+    .from('saved_prompts')
+    .select('*')
+    .order('is_favorite', { ascending: false })
+    .order('use_count', { ascending: false })
+    .order('created_at', { ascending: false });
+  
+  if (error) {
+    console.error('Error fetching saved prompts:', error);
+    throw error;
+  }
+  return data || [];
+}
+
+export async function fetchSavedPromptsByCategory(category: string): Promise<SavedPrompt[]> {
+  const { data, error } = await supabase
+    .from('saved_prompts')
+    .select('*')
+    .eq('category', category)
+    .order('is_favorite', { ascending: false })
+    .order('use_count', { ascending: false });
+  
+  if (error) {
+    console.error('Error fetching saved prompts by category:', error);
+    throw error;
+  }
+  return data || [];
+}
+
+export async function createSavedPrompt(prompt: SavedPromptInsert): Promise<SavedPrompt> {
+  const { data, error } = await supabase
+    .from('saved_prompts')
+    .insert(prompt)
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error creating saved prompt:', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function updateSavedPrompt(id: string, updates: SavedPromptUpdate): Promise<SavedPrompt> {
+  const { data, error } = await supabase
+    .from('saved_prompts')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error updating saved prompt:', error);
+    throw error;
+  }
+  return data;
+}
+
+export async function deleteSavedPrompt(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('saved_prompts')
+    .delete()
+    .eq('id', id);
+  
+  if (error) {
+    console.error('Error deleting saved prompt:', error);
+    throw error;
+  }
+}
+
+export async function incrementPromptUseCount(id: string): Promise<void> {
+  const { data: current } = await supabase
+    .from('saved_prompts')
+    .select('use_count')
+    .eq('id', id)
+    .single();
+
+  await supabase
+    .from('saved_prompts')
+    .update({ use_count: (current?.use_count || 0) + 1 })
+    .eq('id', id);
 }
 
 /** Calcola il prossimo next_run_at in base alla frequency */

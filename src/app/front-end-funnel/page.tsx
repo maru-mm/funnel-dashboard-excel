@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Header from '@/components/Header';
 import { useStore } from '@/store/useStore';
 import { fetchAffiliateSavedFunnels } from '@/lib/supabase-operations';
-import type { AffiliateSavedFunnel } from '@/types/database';
+import type { AffiliateSavedFunnel, SavedPrompt } from '@/types/database';
 import {
   BUILT_IN_PAGE_TYPE_OPTIONS,
   PAGE_TYPE_CATEGORIES,
@@ -43,6 +44,8 @@ import {
   Sparkles,
   Download,
   Paintbrush,
+  BookOpen,
+  Star,
 } from 'lucide-react';
 import VisualHtmlEditor from '@/components/VisualHtmlEditor';
 
@@ -204,7 +207,21 @@ interface ActiveJob {
   visionJobId?: string;
 }
 
+const STEP_TYPE_TO_PAGE_TYPE: Record<string, PageType> = {
+  quiz_question: 'quiz_funnel',
+  info_screen: 'quiz_funnel',
+  checkout: 'checkout',
+  landing: 'landing',
+  lead_capture: 'opt_in',
+  upsell: 'upsell',
+  downsell: 'downsell',
+  thank_you: 'thank_you',
+  sales_page: 'sales_letter',
+  order_form: 'checkout',
+};
+
 export default function FrontEndFunnel() {
+  const searchParams = useSearchParams();
   const {
     products,
     templates,
@@ -293,6 +310,10 @@ export default function FrontEndFunnel() {
   const [affiliateFunnelsError, setAffiliateFunnelsError] = useState<string | null>(null);
   const [selectedAffiliateFunnelId, setSelectedAffiliateFunnelId] = useState<string | null>(null);
 
+  // Saved Prompts
+  const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>([]);
+  const [savedPromptsLoaded, setSavedPromptsLoaded] = useState(false);
+
   // Clone Modal (smooth-responder Edge Function)
   const [cloneModal, setCloneModal] = useState<{
     isOpen: boolean;
@@ -375,15 +396,103 @@ export default function FrontEndFunnel() {
     fetchAffiliateData();
   }, [fetchAffiliateData]);
 
+  // Load saved prompts
+  const loadSavedPrompts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/prompts');
+      const data = await res.json();
+      if (data.prompts) setSavedPrompts(data.prompts);
+    } catch (err) {
+      console.error('Error loading saved prompts:', err);
+    } finally {
+      setSavedPromptsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSavedPrompts();
+  }, [loadSavedPrompts]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[id$="-prompt-dropdown"]') && !target.closest('[id^="row-prompt-"]')) {
+        document.querySelectorAll('[id$="-prompt-dropdown"], [id^="row-prompt-"]').forEach(el => {
+          el.classList.add('hidden');
+        });
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
+
+  const handleSelectSavedPrompt = useCallback((prompt: SavedPrompt, target: 'swipe' | 'clone') => {
+    if (target === 'swipe') {
+      setSwipeConfig(prev => ({ ...prev, prompt: prompt.content }));
+    } else {
+      setCloneConfig(prev => ({ ...prev, customPrompt: prompt.content }));
+    }
+    fetch('/api/prompts', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: prompt.id, action: 'increment_use' }),
+    }).catch(() => {});
+  }, []);
+
+  // Auto-import funnel from My Funnels page via ?import_funnel_id=...
+  const importDoneRef = useRef(false);
+  useEffect(() => {
+    const importId = searchParams.get('import_funnel_id');
+    if (!importId || importDoneRef.current || affiliateFunnelsLoading || affiliateFunnels.length === 0) return;
+
+    const funnel = affiliateFunnels.find((f) => f.id === importId);
+    if (!funnel) return;
+
+    importDoneRef.current = true;
+
+    const steps = Array.isArray(funnel.steps)
+      ? (funnel.steps as AffiliateFunnelStep[])
+      : [];
+
+    if (steps.length === 0) return;
+
+    const funnelName = funnel.funnel_name;
+    for (const step of steps) {
+      const stepType = step.step_type || 'landing';
+      const pageType: PageType = STEP_TYPE_TO_PAGE_TYPE[stepType] || 'landing';
+
+      addFunnelPage({
+        name: step.title
+          ? `${funnelName} - Step ${step.step_index}: ${step.title}`.slice(0, 80)
+          : `${funnelName} - Step ${step.step_index}`,
+        pageType,
+        productId: '',
+        urlToSwipe: step.url || '',
+        prompt: step.description || '',
+        swipeStatus: 'pending',
+        feedback: '',
+      });
+    }
+
+    setSelectedAffiliateFunnelId(importId);
+
+    // Clean URL without reload
+    const url = new URL(window.location.href);
+    url.searchParams.delete('import_funnel_id');
+    window.history.replaceState({}, '', url.toString());
+  }, [searchParams, affiliateFunnels, affiliateFunnelsLoading, addFunnelPage]);
+
+  // Bulk product selection for all rows
+  const handleBulkProductChange = useCallback((productId: string) => {
+    if (!productId) return;
+    for (const page of funnelPages) {
+      updateFunnelPage(page.id, { productId });
+    }
+  }, [funnelPages, updateFunnelPage]);
+
   const handleUseAffiliateStepForSwipe = (step: AffiliateFunnelStep, funnelName: string) => {
     const stepType = step.step_type || 'landing';
-    const pageType: PageType = stepType === 'quiz_question' || stepType === 'info_screen'
-      ? 'quiz_funnel'
-      : stepType === 'checkout'
-        ? 'checkout'
-        : stepType === 'landing'
-          ? 'landing'
-          : 'landing';
+    const pageType: PageType = STEP_TYPE_TO_PAGE_TYPE[stepType] || 'landing';
 
     addFunnelPage({
       name: step.title
@@ -1092,6 +1201,25 @@ export default function FrontEndFunnel() {
               <span className="text-gray-500">
                 {(funnelPages || []).length} pages
               </span>
+              {/* Bulk Product Selector */}
+              {(funnelPages || []).length > 0 && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
+                  <Target className="w-4 h-4 text-amber-600" />
+                  <span className="text-sm font-medium text-amber-800 whitespace-nowrap">Prodotto per tutti:</span>
+                  <select
+                    value=""
+                    onChange={(e) => handleBulkProductChange(e.target.value)}
+                    className="min-w-[160px] px-2 py-1 border border-amber-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                  >
+                    <option value="">— Seleziona —</option>
+                    {(products || []).map((prod) => (
+                      <option key={prod.id} value={prod.id}>
+                        {prod.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {/* Saved Funnels Dropdown (da affiliate_saved_funnels) */}
               <div className="flex items-center gap-2">
                 <label htmlFor="saved-funnel-select" className="text-sm font-medium text-gray-700 flex items-center gap-1">
@@ -1636,15 +1764,59 @@ export default function FrontEndFunnel() {
 
                       {/* Prompt */}
                       <td>
-                        <input
-                          type="text"
-                          value={page.prompt || ''}
-                          onChange={(e) =>
-                            updateFunnelPage(page.id, { prompt: e.target.value })
-                          }
-                          placeholder="Instructions..."
-                          className="truncate"
-                        />
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={page.prompt || ''}
+                            onChange={(e) =>
+                              updateFunnelPage(page.id, { prompt: e.target.value })
+                            }
+                            placeholder="Instructions..."
+                            className="truncate flex-1"
+                          />
+                          {savedPrompts.length > 0 && (
+                            <div className="relative">
+                              <button
+                                type="button"
+                                className="p-1 text-gray-400 hover:text-blue-600 rounded transition-colors shrink-0"
+                                title="Seleziona prompt salvato"
+                                onClick={() => {
+                                  const el = document.getElementById(`row-prompt-${page.id}`);
+                                  if (el) el.classList.toggle('hidden');
+                                }}
+                              >
+                                <BookOpen className="w-3.5 h-3.5" />
+                              </button>
+                              <div
+                                id={`row-prompt-${page.id}`}
+                                className="hidden absolute right-0 top-full mt-1 w-72 max-h-52 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-xl z-50"
+                              >
+                                {savedPrompts.map(sp => (
+                                  <button
+                                    key={sp.id}
+                                    type="button"
+                                    className="w-full text-left px-3 py-2 hover:bg-blue-50 transition-colors border-b border-gray-100 last:border-0"
+                                    onClick={() => {
+                                      updateFunnelPage(page.id, { prompt: sp.content });
+                                      fetch('/api/prompts', {
+                                        method: 'PUT',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ id: sp.id, action: 'increment_use' }),
+                                      }).catch(() => {});
+                                      document.getElementById(`row-prompt-${page.id}`)?.classList.add('hidden');
+                                    }}
+                                  >
+                                    <div className="flex items-center gap-1.5">
+                                      {sp.is_favorite && <Star className="w-3 h-3 text-amber-500 shrink-0" fill="currentColor" />}
+                                      <span className="text-xs font-medium text-gray-900 truncate">{sp.title}</span>
+                                    </div>
+                                    <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{sp.content}</p>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       {/* Product */}
@@ -1873,9 +2045,49 @@ export default function FrontEndFunnel() {
 
                 {/* Prompt */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Custom Prompt (Optional)
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Custom Prompt (Optional)
+                    </label>
+                    {savedPrompts.length > 0 && (
+                      <div className="relative group">
+                        <button
+                          type="button"
+                          className="flex items-center gap-1.5 px-2.5 py-1 text-xs bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors font-medium"
+                          onClick={() => {
+                            const el = document.getElementById('swipe-prompt-dropdown');
+                            if (el) el.classList.toggle('hidden');
+                          }}
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                          Usa Prompt Salvato
+                          <ChevronDown className="w-3 h-3" />
+                        </button>
+                        <div
+                          id="swipe-prompt-dropdown"
+                          className="hidden absolute right-0 top-full mt-1 w-80 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-xl z-50"
+                        >
+                          {savedPrompts.map(sp => (
+                            <button
+                              key={sp.id}
+                              type="button"
+                              className="w-full text-left px-3 py-2.5 hover:bg-blue-50 transition-colors border-b border-gray-100 last:border-0"
+                              onClick={() => {
+                                handleSelectSavedPrompt(sp, 'swipe');
+                                document.getElementById('swipe-prompt-dropdown')?.classList.add('hidden');
+                              }}
+                            >
+                              <div className="flex items-center gap-2">
+                                {sp.is_favorite && <Star className="w-3 h-3 text-amber-500 shrink-0" fill="currentColor" />}
+                                <span className="text-sm font-medium text-gray-900 truncate">{sp.title}</span>
+                              </div>
+                              <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{sp.content}</p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <textarea
                     value={swipeConfig.prompt || ''}
                     onChange={(e) => setSwipeConfig({ ...swipeConfig, prompt: e.target.value })}
@@ -2783,7 +2995,47 @@ export default function FrontEndFunnel() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Istruzioni Custom (opzionale)</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-sm font-medium text-gray-700">Istruzioni Custom (opzionale)</label>
+                      {savedPrompts.length > 0 && (
+                        <div className="relative">
+                          <button
+                            type="button"
+                            className="flex items-center gap-1.5 px-2.5 py-1 text-xs bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors font-medium"
+                            onClick={() => {
+                              const el = document.getElementById('clone-prompt-dropdown');
+                              if (el) el.classList.toggle('hidden');
+                            }}
+                          >
+                            <BookOpen className="w-3.5 h-3.5" />
+                            Usa Prompt Salvato
+                            <ChevronDown className="w-3 h-3" />
+                          </button>
+                          <div
+                            id="clone-prompt-dropdown"
+                            className="hidden absolute right-0 top-full mt-1 w-80 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-xl z-50"
+                          >
+                            {savedPrompts.map(sp => (
+                              <button
+                                key={sp.id}
+                                type="button"
+                                className="w-full text-left px-3 py-2.5 hover:bg-amber-50 transition-colors border-b border-gray-100 last:border-0"
+                                onClick={() => {
+                                  handleSelectSavedPrompt(sp, 'clone');
+                                  document.getElementById('clone-prompt-dropdown')?.classList.add('hidden');
+                                }}
+                              >
+                                <div className="flex items-center gap-2">
+                                  {sp.is_favorite && <Star className="w-3 h-3 text-amber-500 shrink-0" fill="currentColor" />}
+                                  <span className="text-sm font-medium text-gray-900 truncate">{sp.title}</span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{sp.content}</p>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     <textarea
                       value={cloneConfig.customPrompt}
                       onChange={(e) => setCloneConfig({ ...cloneConfig, customPrompt: e.target.value })}

@@ -62,6 +62,61 @@ function distributeTextProportionally(
   }
 }
 
+function replaceBrandInTextContent(
+  html: string,
+  originalUrl: string,
+  originalHtml: string,
+  productName: string
+): string {
+  if (!productName || !originalUrl) return html
+
+  const brandsToReplace: string[] = []
+
+  try {
+    const urlObj = new URL(originalUrl)
+    const domain = urlObj.hostname.replace(/^www\./, '').split('.')[0]
+    if (domain && domain.length > 3) {
+      brandsToReplace.push(domain)
+      brandsToReplace.push(domain.charAt(0).toUpperCase() + domain.slice(1))
+    }
+  } catch {}
+
+  const origTitleMatch = originalHtml.match(/<title[^>]*>([^<]+)<\/title>/i)
+  if (origTitleMatch) {
+    const titleParts = origTitleMatch[1].trim().split(/\s*[-|:–—]\s*/)
+    for (const part of titleParts) {
+      const t = part.trim()
+      if (t.length > 3 && t.length < 40 && t.toLowerCase() !== productName.toLowerCase()) {
+        brandsToReplace.push(t)
+      }
+    }
+  }
+
+  const ogMatch = originalHtml.match(/property=["']og:site_name["']\s*content=["']([^"']+)["']/i) ||
+                   originalHtml.match(/content=["']([^"']+)["']\s*property=["']og:site_name["']/i)
+  if (ogMatch && ogMatch[1].trim().length > 3) {
+    brandsToReplace.push(ogMatch[1].trim())
+  }
+
+  const uniqueBrands = [...new Set(brandsToReplace)]
+    .filter(b => b.length > 3 && b.toLowerCase() !== productName.toLowerCase())
+    .sort((a, b) => b.length - a.length)
+
+  if (uniqueBrands.length === 0) return html
+
+  console.log(`🏷️ Brand post-processing: [${uniqueBrands.join(', ')}] → "${productName}"`)
+  const htmlParts = html.split(/(<[^>]+>)/)
+  for (let i = 0; i < htmlParts.length; i++) {
+    if (!htmlParts[i].startsWith('<')) {
+      for (const brand of uniqueBrands) {
+        const escaped = brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        htmlParts[i] = htmlParts[i].replace(new RegExp(escaped, 'gi'), productName)
+      }
+    }
+  }
+  return htmlParts.join('')
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -374,6 +429,8 @@ serve(async (req) => {
           }
         }
 
+        clonedHTML = replaceBrandInTextContent(clonedHTML, job.url, job.original_html, job.product_name)
+
         console.log(`✅ Ricostruzione HTML completata: ${replacementCount} testi sostituiti`)
 
         await supabase
@@ -451,6 +508,13 @@ serve(async (req) => {
          job.custom_prompt.toLowerCase().includes('italian') ||
          job.custom_prompt.toLowerCase().includes('traduci') ||
          job.custom_prompt.toLowerCase().includes('translate'))
+
+      let detectedBrand = ''
+      try {
+        const urlObj = new URL(job.url)
+        detectedBrand = urlObj.hostname.replace(/^www\./, '').split('.')[0]
+        if (detectedBrand.length <= 3) detectedBrand = ''
+      } catch {}
       
       const rewritePrompt = `La landing page è un TEMPLATE strutturale. Il tuo compito è riscrivere TUTTI i testi usando SOLO le informazioni del nuovo prodotto.
 
@@ -482,6 +546,8 @@ ${job.custom_prompt ? `Istruzioni copy personalizzate: ${job.custom_prompt}` : '
 - Se il testo originale è in inglese, scrivi tutto in inglese
 - Se il testo originale è in italiano, scrivi tutto in italiano
 - NON copiare NESSUNA parola dal testo originale - riscrivi tutto da zero
+- Se trovi nomi di brand, aziende o siti web del competitor nel testo originale, sostituiscili SEMPRE con "${job.product_name}"
+${detectedBrand ? `- ATTENZIONE: il brand originale è probabilmente "${detectedBrand}" - sostituisci OGNI sua occorrenza con "${job.product_name}"` : ''}
 
 📝 TESTI DA RISCRIVERE (usa solo per capire lunghezza/tipo/formattazione - IGNORA completamente il contenuto):
 ${JSON.stringify(batchTexts, null, 2)}
@@ -732,6 +798,8 @@ RESTITUISCI SOLO JSON ARRAY (stesso ordine):
             else console.warn(`⚠️ Testo NON sostituito: "${originalText.substring(0, 50)}..."`)
           }
         }
+
+        clonedHTML = replaceBrandInTextContent(clonedHTML, job.url, job.original_html, job.product_name)
 
         console.log(`✅ Ricostruzione HTML completata: ${replacementCount} testi sostituiti`)
 

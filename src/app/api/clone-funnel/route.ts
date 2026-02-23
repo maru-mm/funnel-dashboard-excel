@@ -324,48 +324,64 @@ export async function POST(request: NextRequest) {
         // Step 2: Extract texts directly from the rendered DOM via Playwright
         const extractResult = await pwPage.evaluate(() => {
           const skipTags: Record<string, boolean> = {
-            SCRIPT:true, STYLE:true, NOSCRIPT:true, IFRAME:true, SVG:true, META:true, LINK:true, BR:true, HR:true, IMG:true, INPUT:true, SELECT:true, TEXTAREA:true
+            SCRIPT:true, STYLE:true, NOSCRIPT:true, IFRAME:true, SVG:true, META:true, LINK:true, BR:true, HR:true, IMG:true
+          };
+          const formTags: Record<string, boolean> = {
+            INPUT:true, SELECT:true, TEXTAREA:true, OPTION:true
+          };
+          const blockTags: Record<string, boolean> = {
+            DIV:true, SECTION:true, ARTICLE:true, MAIN:true, ASIDE:true, HEADER:true, FOOTER:true, NAV:true,
+            H1:true, H2:true, H3:true, H4:true, H5:true, H6:true, P:true,
+            UL:true, OL:true, LI:true, DL:true, DT:true, DD:true,
+            TABLE:true, THEAD:true, TBODY:true, TFOOT:true, TR:true, TD:true, TH:true,
+            BLOCKQUOTE:true, FIGCAPTION:true, FIGURE:true, DETAILS:true, SUMMARY:true,
+            FORM:true, FIELDSET:true, LEGEND:true, DIALOG:true, PRE:true, ADDRESS:true,
+            BUTTON:true
           };
           const texts: Array<{
             index: number; originalText: string; tagName: string; fullTag: string;
             classes: string; attributes: string; context: string; position: number; rawText?: string;
           }> = [];
           let idx = 0;
-
-          // Extract visible text from all elements
-          const allEls = document.body.querySelectorAll('*');
           const extracted = new Set<string>();
 
+          const allEls = document.body.querySelectorAll('*');
           allEls.forEach((el) => {
-            if (skipTags[el.tagName]) return;
+            if (skipTags[el.tagName] || formTags[el.tagName]) return;
             const rect = el.getBoundingClientRect();
             if (rect.width < 5 || rect.height < 5) return;
             const style = window.getComputedStyle(el);
             if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
 
-            // Get direct text content (not from children)
-            let directText = '';
-            el.childNodes.forEach(node => {
-              if (node.nodeType === 3) directText += node.textContent || '';
+            // Full text including inline children (<strong>, <em>, <a>, <span>)
+            const fullText = (el.textContent || '').replace(/\s+/g, ' ').trim();
+            if (fullText.length < 2 || !fullText.match(/[a-zA-Z]/)) return;
+
+            // Skip elements with block-level children — those children will be extracted separately
+            const hasBlockChildWithText = Array.from(el.children).some(child => {
+              if (skipTags[child.tagName] || formTags[child.tagName]) return false;
+              const childText = (child.textContent || '').trim();
+              return blockTags[child.tagName] && childText.length >= 2;
             });
-            directText = directText.replace(/\s+/g, ' ').trim();
+            if (hasBlockChildWithText) return;
 
-            if (directText.length < 2 || !directText.match(/[a-zA-Z]/)) return;
-            // Skip duplicates and code-like content
-            if (extracted.has(directText)) return;
-            if (directText.includes('{') || directText.includes('}') || directText.includes('=>')) return;
-            if (directText.startsWith('http') || directText.startsWith('//')) return;
+            if (extracted.has(fullText)) return;
+            if (fullText.includes('{') && fullText.includes('}') && fullText.includes('=>')) return;
+            if (fullText.startsWith('http') || fullText.startsWith('//')) return;
 
-            extracted.add(directText);
+            extracted.add(fullText);
             const tag = el.tagName.toLowerCase();
             const cls = el.getAttribute('class') || '';
+            const id = el.getAttribute('id') || '';
+            const innerHTML = el.innerHTML;
             const attrs = Array.from(el.attributes).map(a => `${a.name}="${a.value}"`).join(' ').substring(0, 200);
 
             texts.push({
               index: idx++,
-              originalText: directText,
+              originalText: fullText,
+              rawText: innerHTML && innerHTML !== fullText && innerHTML.length <= 5000 ? innerHTML : undefined,
               tagName: tag,
-              fullTag: `<${tag}${cls ? ` class="${cls}"` : ''}>`,
+              fullTag: `<${tag}${id ? ` id="${id}"` : ''}${cls ? ` class="${cls}"` : ''}>`,
               classes: cls,
               attributes: attrs,
               context: tag,
@@ -392,6 +408,27 @@ export async function POST(request: NextRequest) {
               }
             });
           });
+
+          // Extract <title> tag text (often contains brand name)
+          const titleEl = document.querySelector('title');
+          if (titleEl) {
+            const titleText = (titleEl.textContent || '').trim();
+            const titleHtml = titleEl.innerHTML;
+            if (titleText.length >= 3 && titleText.match(/[a-zA-Z]/) && !extracted.has(titleText)) {
+              extracted.add(titleText);
+              texts.push({
+                index: idx++,
+                originalText: titleText,
+                rawText: titleHtml !== titleText ? titleHtml : undefined,
+                tagName: 'title',
+                fullTag: '<title>',
+                classes: '',
+                attributes: '',
+                context: 'title',
+                position: -1,
+              });
+            }
+          }
 
           return texts;
         });

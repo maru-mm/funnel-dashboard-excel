@@ -8,6 +8,7 @@ import {
   Maximize2, Minimize2, Layers, PanelRightClose, PanelRightOpen,
   Type, Save, MousePointer, Heading1, Heading2, Heading3,
   CheckCircle, Strikethrough, List, ListOrdered, Minus,
+  Sparkles, Loader2, Wand2, ImagePlus, Bot, Zap, RotateCcw, Send,
 } from 'lucide-react';
 
 /* ─────────── Types ─────────── */
@@ -267,6 +268,31 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
   const redoStack = useRef<string[]>([]);
   const undoIdx = useRef(0);
 
+  /* ── AI Image Generation ── */
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiSize, setAiSize] = useState<'1024x1024' | '1792x1024' | '1024x1792'>('1024x1024');
+  const [aiStyle, setAiStyle] = useState<'vivid' | 'natural'>('vivid');
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiRevisedPrompt, setAiRevisedPrompt] = useState('');
+  const [showAiPanel, setShowAiPanel] = useState(false);
+
+  /* ── AI Code Editor ── */
+  const [aiEditPrompt, setAiEditPrompt] = useState('');
+  const [aiEditModel, setAiEditModel] = useState<'claude' | 'gemini'>('claude');
+  const [aiEditRunning, setAiEditRunning] = useState(false);
+  const [aiEditError, setAiEditError] = useState('');
+  const [aiEditProgress, setAiEditProgress] = useState<{ chunkIndex: number; totalChunks: number; label: string } | null>(null);
+  const [showAiEditPanel, setShowAiEditPanel] = useState(false);
+  const [aiEditHistory, setAiEditHistory] = useState<string[]>([]);
+  const [aiPresetPrompts] = useState([
+    { label: 'Conspiracy / Dark Brand', prompt: 'Trasforma completamente il brand in stile conspiracy/segreto: usa colori scuri (nero, rosso scuro, oro), font impattanti, aggiungi elementi visivi misteriosi, rendi il tono più urgente e segreto, modifica tutti i testi per avere un angolo conspiracy con linguaggio "they don\'t want you to know", aggiungi simboli come occhi, triangoli, lucchetti dove appropriato nei testi.' },
+    { label: 'Luxury / Premium', prompt: 'Trasforma il brand in stile luxury premium: usa colori eleganti (nero, oro, bianco), font serif eleganti, spaziature ampie, aggiungi ombre sottili, rendi il design minimalista e sofisticato, modifica i testi con tono esclusivo e premium.' },
+    { label: 'Urgenza / Scarcity', prompt: 'Aggiungi massima urgenza e scarcity a tutta la pagina: banner rossi/gialli di urgenza, countdown timer styling, badge "posti limitati", "offerta in scadenza", colori che comunicano urgenza (rosso, arancione), testi con scarcity e urgenza massima.' },
+    { label: 'Health / Natural', prompt: 'Trasforma in stile salute/naturale: colori verdi, beige, marroni terrosi, font puliti e moderni, immagini di natura, toni caldi, testi che enfatizzano naturalità, benessere, ingredienti puri.' },
+    { label: 'Tech / Futuristico', prompt: 'Trasforma in stile tech futuristico: colori cyan, viola, nero, gradienti neon, font sans-serif moderni, bordi sottili luminosi, effetti glow, testi con tono innovativo e tecnologico.' },
+  ]);
+
   /* ── Undo/Redo ── */
   const pushUndo = useCallback((html: string) => {
     const stack = undoStack.current;
@@ -388,6 +414,123 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
     navigator.clipboard.writeText(currentHtml);
   };
 
+  /* ── AI Image Generation ── */
+  const handleAiGenerate = useCallback(async () => {
+    if (!aiPrompt.trim() || aiGenerating) return;
+    setAiGenerating(true);
+    setAiError('');
+    setAiRevisedPrompt('');
+    try {
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: aiPrompt, size: aiSize, style: aiStyle }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Errore nella generazione');
+      if (data.url) {
+        setAttr('src', data.url);
+        if (data.revisedPrompt) {
+          setAiRevisedPrompt(data.revisedPrompt);
+          setAttr('alt', data.revisedPrompt.substring(0, 120));
+        }
+      }
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'Errore sconosciuto');
+    } finally {
+      setAiGenerating(false);
+    }
+  }, [aiPrompt, aiSize, aiStyle, aiGenerating, setAttr]);
+
+  /* ── AI Code Edit Handler ── */
+  const handleAiEdit = useCallback(async () => {
+    if (!aiEditPrompt.trim() || aiEditRunning) return;
+    setAiEditRunning(true);
+    setAiEditError('');
+    setAiEditProgress(null);
+
+    try {
+      const res = await fetch('/api/ai-edit-html', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          html: currentHtml,
+          prompt: aiEditPrompt,
+          model: aiEditModel,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'Errore di rete' }));
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('Stream non disponibile');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+
+            switch (data.type) {
+              case 'chunk-start':
+                setAiEditProgress({
+                  chunkIndex: data.chunkIndex,
+                  totalChunks: data.totalChunks,
+                  label: data.label || `Chunk ${data.chunkIndex + 1}`,
+                });
+                break;
+              case 'chunk-done':
+                break;
+              case 'result':
+                if (data.html) {
+                  setAiEditHistory(prev => [...prev, currentHtml]);
+                  setCurrentHtml(data.html);
+                  setCodeHtml(data.html);
+                  pushUndo(data.html);
+                }
+                break;
+              case 'error':
+                throw new Error(data.error);
+              case 'done':
+                break;
+            }
+          } catch (parseErr) {
+            if (parseErr instanceof Error && parseErr.message !== 'done') {
+              if (!parseErr.message.includes('Unexpected')) throw parseErr;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      setAiEditError(err instanceof Error ? err.message : 'Errore sconosciuto');
+    } finally {
+      setAiEditRunning(false);
+      setAiEditProgress(null);
+    }
+  }, [aiEditPrompt, aiEditModel, aiEditRunning, currentHtml, pushUndo]);
+
+  const handleAiEditUndo = useCallback(() => {
+    if (aiEditHistory.length === 0) return;
+    const prev = aiEditHistory[aiEditHistory.length - 1];
+    setAiEditHistory(h => h.slice(0, -1));
+    setCurrentHtml(prev);
+    setCodeHtml(prev);
+    pushUndo(prev);
+  }, [aiEditHistory, pushUndo]);
+
   /* ── Keyboard shortcuts ── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -446,6 +589,25 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
               </button>
             ))}
           </div>
+
+          <div className="w-px h-6 bg-slate-700 mx-1" />
+
+          {/* AI Edit Toggle */}
+          <button
+            onClick={() => setShowAiEditPanel(!showAiEditPanel)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+              showAiEditPanel
+                ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-lg shadow-violet-500/30'
+                : aiEditRunning
+                  ? 'bg-violet-500/20 text-violet-300 animate-pulse'
+                  : 'bg-slate-800 text-violet-300 hover:bg-violet-600/30 hover:text-violet-200'
+            }`}
+            title="AI Editor - Modifica con intelligenza artificiale"
+          >
+            <Bot className="h-4 w-4" />
+            <span className="hidden sm:inline">AI Editor</span>
+            {aiEditRunning && <Loader2 className="h-3 w-3 animate-spin" />}
+          </button>
 
           <div className="w-px h-6 bg-slate-700 mx-1" />
 
@@ -678,6 +840,104 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
                     <label className="text-[10px] text-slate-500 mt-2 mb-0.5 block">Testo alt</label>
                     <input type="text" defaultValue={el.alt} className="prop-input"
                       onBlur={(e) => setAttr('alt', e.target.value)} />
+
+                    {/* AI Image preview */}
+                    {el.src && (
+                      <div className="mt-2 rounded-lg overflow-hidden border border-slate-200 bg-slate-50">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={el.src} alt={el.alt || 'preview'} className="w-full h-auto max-h-32 object-contain" />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* AI Image Generation */}
+                {el.tagName === 'img' && (
+                  <div className="p-3">
+                    <button
+                      onClick={() => setShowAiPanel(!showAiPanel)}
+                      className="w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-gradient-to-r from-violet-50 to-purple-50 border border-violet-200 hover:border-violet-300 transition-all group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-center w-6 h-6 rounded-md bg-violet-500/10">
+                          <Sparkles className="h-3.5 w-3.5 text-violet-600" />
+                        </div>
+                        <span className="text-xs font-semibold text-violet-700">Genera con AI</span>
+                      </div>
+                      <Wand2 className={`h-3.5 w-3.5 text-violet-400 transition-transform ${showAiPanel ? 'rotate-45' : ''}`} />
+                    </button>
+
+                    {showAiPanel && (
+                      <div className="mt-2 space-y-2.5 p-2.5 rounded-lg bg-gradient-to-b from-violet-50/50 to-transparent border border-violet-100">
+                        <div>
+                          <label className="text-[10px] text-violet-600 font-medium mb-0.5 block">Descrivi l&apos;immagine</label>
+                          <textarea
+                            value={aiPrompt}
+                            onChange={(e) => setAiPrompt(e.target.value)}
+                            placeholder="Es: Una bottiglia di olio d'oliva premium con sfondo mediterraneo, luce calda, stile fotografico professionale..."
+                            rows={3}
+                            className="prop-input text-[11px] leading-relaxed resize-none !border-violet-200 focus:!border-violet-400 focus:!shadow-[0_0_0_2px_rgba(139,92,246,0.1)]"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] text-violet-500">Dimensione</label>
+                            <select
+                              value={aiSize}
+                              onChange={(e) => setAiSize(e.target.value as typeof aiSize)}
+                              className="prop-select !border-violet-200 text-[10px]"
+                            >
+                              <option value="1024x1024">Quadrato</option>
+                              <option value="1792x1024">Orizzontale</option>
+                              <option value="1024x1792">Verticale</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-violet-500">Stile</label>
+                            <select
+                              value={aiStyle}
+                              onChange={(e) => setAiStyle(e.target.value as typeof aiStyle)}
+                              className="prop-select !border-violet-200 text-[10px]"
+                            >
+                              <option value="vivid">Vivido</option>
+                              <option value="natural">Naturale</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={handleAiGenerate}
+                          disabled={!aiPrompt.trim() || aiGenerating}
+                          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
+                        >
+                          {aiGenerating ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Generazione in corso...
+                            </>
+                          ) : (
+                            <>
+                              <ImagePlus className="h-3.5 w-3.5" />
+                              Genera Immagine
+                            </>
+                          )}
+                        </button>
+
+                        {aiError && (
+                          <div className="p-2 rounded-md bg-red-50 border border-red-200">
+                            <p className="text-[10px] text-red-600 font-medium">{aiError}</p>
+                          </div>
+                        )}
+
+                        {aiRevisedPrompt && (
+                          <div className="p-2 rounded-md bg-emerald-50 border border-emerald-200">
+                            <p className="text-[10px] text-emerald-600 font-medium mb-0.5">Prompt utilizzato da DALL-E:</p>
+                            <p className="text-[10px] text-emerald-700 leading-relaxed">{aiRevisedPrompt}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -796,6 +1056,155 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
           </div>
         )}
       </div>
+
+      {/* ═══ AI Edit Panel (Floating) ═══ */}
+      {showAiEditPanel && (
+        <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-[70] w-[680px] max-w-[95vw]">
+          <div className="bg-slate-900/98 backdrop-blur-xl rounded-2xl border border-violet-500/30 shadow-2xl shadow-violet-500/10 overflow-hidden">
+            {/* Panel Header */}
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-700/50">
+              <div className="flex items-center gap-2.5">
+                <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 shadow-lg shadow-violet-500/30">
+                  <Bot className="h-4 w-4 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">AI Code Editor</h3>
+                  <p className="text-[10px] text-slate-400">Modifica l&apos;intera pagina con AI in modo intelligente a chunk</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* Model Switcher */}
+                <div className="flex items-center bg-slate-800 rounded-lg p-0.5 border border-slate-700">
+                  <button
+                    onClick={() => setAiEditModel('claude')}
+                    disabled={aiEditRunning}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                      aiEditModel === 'claude'
+                        ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Zap className="h-3 w-3" />Claude
+                  </button>
+                  <button
+                    onClick={() => setAiEditModel('gemini')}
+                    disabled={aiEditRunning}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                      aiEditModel === 'gemini'
+                        ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white shadow-md'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Sparkles className="h-3 w-3" />Gemini
+                  </button>
+                </div>
+                <button onClick={() => setShowAiEditPanel(false)} className="p-1 rounded-lg text-slate-500 hover:text-white hover:bg-slate-700 transition-colors">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="px-4 py-2 border-b border-slate-800/50">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
+                <span className="text-[10px] text-slate-500 shrink-0 mr-1">Quick:</span>
+                {aiPresetPrompts.map((preset, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setAiEditPrompt(preset.prompt)}
+                    disabled={aiEditRunning}
+                    className="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-medium bg-slate-800 text-slate-300 hover:bg-violet-600/30 hover:text-violet-200 border border-slate-700 hover:border-violet-500/50 transition-all disabled:opacity-40"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Prompt Input */}
+            <div className="p-4">
+              <div className="relative">
+                <textarea
+                  value={aiEditPrompt}
+                  onChange={(e) => setAiEditPrompt(e.target.value)}
+                  placeholder="Descrivi come vuoi modificare la pagina... Es: 'Trasforma tutto il brand in stile conspiracy con colori scuri, rosso e oro, tono misterioso e urgente'"
+                  rows={3}
+                  disabled={aiEditRunning}
+                  className="w-full bg-slate-800/60 text-slate-200 text-sm rounded-xl border border-slate-700 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 px-4 py-3 pr-12 resize-none outline-none placeholder:text-slate-500 disabled:opacity-50 transition-all leading-relaxed"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      handleAiEdit();
+                    }
+                  }}
+                />
+                <button
+                  onClick={handleAiEdit}
+                  disabled={!aiEditPrompt.trim() || aiEditRunning}
+                  className="absolute right-2 bottom-2 p-2 rounded-lg bg-gradient-to-r from-violet-600 to-purple-600 text-white hover:from-violet-500 hover:to-purple-500 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-lg shadow-violet-500/20 hover:shadow-violet-500/40"
+                  title="Avvia modifica AI (Ctrl+Enter)"
+                >
+                  {aiEditRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                </button>
+              </div>
+
+              {/* Progress Bar */}
+              {aiEditRunning && aiEditProgress && (
+                <div className="mt-3 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-violet-300 font-medium flex items-center gap-1.5">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {aiEditProgress.label}
+                    </span>
+                    <span className="text-slate-500">
+                      {aiEditProgress.chunkIndex + 1} / {aiEditProgress.totalChunks}
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-violet-500 to-purple-500 rounded-full transition-all duration-500 ease-out"
+                      style={{ width: `${((aiEditProgress.chunkIndex + 1) / aiEditProgress.totalChunks) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {aiEditRunning && !aiEditProgress && (
+                <div className="mt-3 flex items-center gap-2 text-[11px] text-violet-300">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span>Preparazione modifica con {aiEditModel === 'claude' ? 'Claude' : 'Gemini'}...</span>
+                </div>
+              )}
+
+              {/* Error */}
+              {aiEditError && (
+                <div className="mt-3 p-2.5 rounded-lg bg-red-500/10 border border-red-500/30">
+                  <p className="text-[11px] text-red-400 font-medium">{aiEditError}</p>
+                </div>
+              )}
+
+              {/* AI Edit Undo + Info */}
+              <div className="mt-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {aiEditHistory.length > 0 && (
+                    <button
+                      onClick={handleAiEditUndo}
+                      disabled={aiEditRunning}
+                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 transition-colors disabled:opacity-40"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Annulla AI ({aiEditHistory.length})
+                    </button>
+                  )}
+                </div>
+                <span className="text-[10px] text-slate-600">
+                  {currentHtml.length.toLocaleString()} car · Ctrl+Enter per inviare
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ Bottom Bar ═══ */}
       {mode === 'visual' && (

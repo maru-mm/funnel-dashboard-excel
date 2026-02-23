@@ -4,10 +4,21 @@ import OpenAI from 'openai';
 export const maxDuration = 120;
 export const dynamic = 'force-dynamic';
 
-const SYSTEM_PROMPT = `Sei un esperto mondiale di funnel marketing, direct response copywriting, persuasione e ingegneria dei funnel.
-Il tuo compito è fare REVERSE ENGINEERING completo di un funnel analizzando ogni singolo step.
+const MODEL = 'gpt-4.1';
 
-Per ogni step del funnel, devi identificare:
+const SYSTEM_PROMPT = `Sei un esperto mondiale di funnel marketing, direct response copywriting, persuasione e ingegneria dei funnel.
+Il tuo compito è fare REVERSE ENGINEERING completo di un funnel.
+
+Ti verranno forniti uno o più dei seguenti materiali:
+- Dati strutturati di un funnel (JSON con step, URL, ecc.)
+- Screenshot delle pagine del funnel (immagini)
+- Documenti PDF con informazioni sul funnel
+- Contenuto HTML/testo delle pagine web recuperato dai link
+- Note aggiuntive dell'analista
+
+Usa TUTTI i materiali disponibili per ricostruire e analizzare l'intero funnel in profondità.
+
+Per ogni step del funnel che riesci a identificare, analizza:
 1. **Meccanismo Unico (Unique Mechanism)**: Qual è l'elemento differenziante che rende questo step unico? Qual è la "big idea" o il "big promise"?
 2. **Obiettivo dello Step**: Cosa vuole ottenere questo step nel percorso dell'utente?
 3. **Trigger Psicologici**: Quali leve psicologiche vengono utilizzate (scarcity, urgency, social proof, authority, reciprocity, curiosity gap, ecc.)?
@@ -25,6 +36,7 @@ Inoltre, fornisci un'analisi globale del funnel:
 - **Punti di Forza**: Cosa funziona eccezionalmente bene
 - **Punti Deboli**: Dove il funnel potrebbe migliorare
 - **Suggerimenti di Ottimizzazione**: Come potresti migliorare il funnel
+- **Proposta Funnel Rigenerato**: Descrivi step-by-step come ricostruiresti/ottimizzeresti il funnel
 
 Rispondi SOLO con un JSON valido (senza markdown, senza blocchi di codice) con questa struttura:
 
@@ -36,7 +48,7 @@ Rispondi SOLO con un JSON valido (senza markdown, senza blocchi di codice) con q
     "target_avatar": "avatar del cliente ideale",
     "awareness_level": "livello di consapevolezza del target (unaware, problem-aware, solution-aware, product-aware, most-aware)",
     "sophistication_level": "livello di sofisticazione del mercato (1-5 secondo Eugene Schwartz)",
-    "customer_journey_emotions": ["emozione1 → emozione2 → emozione3..."],
+    "customer_journey_emotions": ["emozione1", "emozione2", "emozione3"],
     "overall_effectiveness_score": 1-10,
     "copy_score": 1-10,
     "design_score": 1-10,
@@ -51,7 +63,7 @@ Rispondi SOLO con un JSON valido (senza markdown, senza blocchi di codice) con q
     {
       "step_index": 1,
       "step_name": "nome/titolo dello step",
-      "step_type": "tipo (landing, quiz_question, lead_capture, checkout, upsell, ecc.)",
+      "step_type": "tipo (landing, quiz_question, lead_capture, checkout, upsell, info_screen, thank_you, other)",
       "unique_mechanism": "il meccanismo unico di questo specifico step",
       "objective": "obiettivo principale dello step",
       "psychological_triggers": ["trigger1", "trigger2"],
@@ -74,8 +86,38 @@ Rispondi SOLO con un JSON valido (senza markdown, senza blocchi di codice) con q
       },
       "effectiveness_notes": "note sull'efficacia di questo step"
     }
-  ]
+  ],
+  "regenerated_funnel": {
+    "concept": "concetto generale del funnel rigenerato/ottimizzato",
+    "improvements_applied": ["miglioramento 1", "miglioramento 2"],
+    "steps": [
+      {
+        "step_index": 1,
+        "step_name": "nome dello step rigenerato",
+        "step_type": "tipo",
+        "headline": "headline proposta",
+        "subheadline": "subheadline proposta",
+        "body_copy": "riassunto del body copy proposto",
+        "cta_text": "testo CTA proposto",
+        "key_elements": ["elemento 1", "elemento 2"],
+        "why_improved": "perché questo step è migliore dell'originale"
+      }
+    ]
+  }
 }`;
+
+interface MaterialFile {
+  data: string;
+  name: string;
+}
+
+interface Materials {
+  links?: string[];
+  images?: MaterialFile[];
+  documents?: MaterialFile[];
+  notes?: string;
+  funnelName?: string;
+}
 
 function parseJsonResponse(text: string): Record<string, unknown> | null {
   const trimmed = text.trim();
@@ -89,14 +131,45 @@ function parseJsonResponse(text: string): Record<string, unknown> | null {
   }
 }
 
+async function fetchUrlContent(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    const html = await res.text();
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&#\d+;/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text.substring(0, 10000);
+  } catch (e) {
+    return `[Errore nel recuperare ${url}: ${e instanceof Error ? e.message : 'errore sconosciuto'}]`;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { funnel } = body as { funnel: Record<string, unknown> };
+    const { funnel, materials } = body as {
+      funnel?: Record<string, unknown>;
+      materials?: Materials;
+    };
 
-    if (!funnel) {
+    if (!funnel && !materials) {
       return NextResponse.json(
-        { error: 'Il campo "funnel" è obbligatorio' },
+        { error: 'Fornisci un funnel salvato o carica materiali per l\'analisi' },
         { status: 400 }
       );
     }
@@ -111,19 +184,73 @@ export async function POST(request: NextRequest) {
 
     const openai = new OpenAI({ apiKey });
 
-    const funnelContext = JSON.stringify(funnel, null, 2);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const contentParts: any[] = [];
+    let contextText = '';
+
+    if (funnel) {
+      contextText += `\n\n## DATI FUNNEL SALVATO:\n${JSON.stringify(funnel, null, 2)}`;
+    }
+
+    if (materials) {
+      if (materials.funnelName) {
+        contextText += `\n\n## NOME FUNNEL: ${materials.funnelName}`;
+      }
+
+      if (materials.links && materials.links.length > 0) {
+        contextText += '\n\n## CONTENUTO PAGINE WEB RECUPERATO:';
+        const urlResults = await Promise.all(
+          materials.links.map(async (link) => {
+            const content = await fetchUrlContent(link);
+            return `\n\n### URL: ${link}\n${content}`;
+          })
+        );
+        contextText += urlResults.join('');
+      }
+
+      if (materials.notes) {
+        contextText += `\n\n## NOTE AGGIUNTIVE DELL'ANALISTA:\n${materials.notes}`;
+      }
+    }
+
+    contentParts.push({
+      type: 'text',
+      text: `Analizza questo funnel e fai il reverse engineering completo basandoti su tutti i materiali forniti. Identifica ogni step, analizzalo in profondità, e proponi una versione rigenerata/ottimizzata.\n${contextText}`,
+    });
+
+    if (materials?.images && materials.images.length > 0) {
+      for (const img of materials.images) {
+        contentParts.push({
+          type: 'image_url',
+          image_url: { url: img.data, detail: 'high' as const },
+        });
+      }
+    }
+
+    if (materials?.documents && materials.documents.length > 0) {
+      for (const doc of materials.documents) {
+        try {
+          contentParts.push({
+            type: 'file',
+            file: {
+              filename: doc.name,
+              file_data: doc.data,
+            },
+          });
+        } catch {
+          contextText += `\n\n[Documento "${doc.name}" caricato ma non processabile direttamente. Usa screenshot per migliori risultati.]`;
+        }
+      }
+    }
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: MODEL,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: `Analizza questo funnel e fai il reverse engineering completo:\n\n${funnelContext}`,
-        },
+        { role: 'user', content: contentParts },
       ],
       temperature: 0.4,
-      max_tokens: 8000,
+      max_tokens: 16384,
       response_format: { type: 'json_object' },
     });
 
@@ -135,6 +262,7 @@ export async function POST(request: NextRequest) {
       analysis: analysis ?? rawText,
       analysisRaw: !analysis ? rawText : undefined,
       usage: completion.usage,
+      model: MODEL,
     });
   } catch (error) {
     console.error('[reverse-funnel/analyze] Error:', error);

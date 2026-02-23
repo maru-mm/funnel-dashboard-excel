@@ -37,6 +37,12 @@ import {
   Workflow,
   Save,
   Plus,
+  PlusCircle,
+  GripVertical,
+  ArrowUp,
+  ArrowDown,
+  Copy,
+  Edit3,
 } from 'lucide-react';
 
 /* ───────── helpers ───────── */
@@ -86,6 +92,17 @@ const FUNNEL_TYPE_COLORS: Record<string, string> = {
   lead_magnet: 'bg-teal-100 text-teal-800',
   vsl_funnel: 'bg-orange-100 text-orange-800',
   other: 'bg-slate-100 text-slate-700',
+};
+
+const STEP_TYPE_LABELS: Record<string, string> = {
+  quiz_question: 'Quiz Question',
+  info_screen: 'Info Screen',
+  lead_capture: 'Lead Capture',
+  checkout: 'Checkout',
+  upsell: 'Upsell',
+  thank_you: 'Thank You',
+  landing: 'Landing',
+  other: 'Altro',
 };
 
 const STEP_TYPE_COLORS: Record<string, string> = {
@@ -473,6 +490,173 @@ export default function MyFunnelsPage() {
     }
   }, [saveForm, collectedSteps, selectedFunnelIds, selectedPages, funnels, clearSelection]);
 
+  /* ═══════════ Create from scratch modal state ═══════════ */
+
+  interface ScratchStep {
+    id: string;
+    title: string;
+    url: string;
+    step_type: string;
+    description: string;
+    cta_text: string;
+    options: string[];
+    input_type: string;
+  }
+
+  const emptyScratchStep = (): ScratchStep => ({
+    id: crypto.randomUUID(),
+    title: '',
+    url: '',
+    step_type: 'landing',
+    description: '',
+    cta_text: '',
+    options: [],
+    input_type: 'none',
+  });
+
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createSuccess, setCreateSuccess] = useState<string | null>(null);
+  const [createForm, setCreateForm] = useState({
+    funnel_name: '',
+    funnel_type: 'sales_funnel',
+    category: 'other',
+    brand_name: '',
+    entry_url: '',
+    analysis_summary: '',
+    tags: '' as string,
+    persuasion_techniques: '' as string,
+    notable_elements: '' as string,
+    lead_capture_method: 'none',
+  });
+  const [scratchSteps, setScratchSteps] = useState<ScratchStep[]>([emptyScratchStep()]);
+  const [editingStepOptionIdx, setEditingStepOptionIdx] = useState<{ stepId: string; text: string } | null>(null);
+
+  const openCreateModal = useCallback(() => {
+    setCreateForm({
+      funnel_name: '',
+      funnel_type: 'sales_funnel',
+      category: 'other',
+      brand_name: '',
+      entry_url: '',
+      analysis_summary: '',
+      tags: '',
+      persuasion_techniques: '',
+      notable_elements: '',
+      lead_capture_method: 'none',
+    });
+    setScratchSteps([emptyScratchStep()]);
+    setCreateSuccess(null);
+    setShowCreateModal(true);
+  }, []);
+
+  const addScratchStep = useCallback(() => {
+    setScratchSteps((prev) => [...prev, emptyScratchStep()]);
+  }, []);
+
+  const removeScratchStep = useCallback((id: string) => {
+    setScratchSteps((prev) => prev.length > 1 ? prev.filter((s) => s.id !== id) : prev);
+  }, []);
+
+  const updateScratchStep = useCallback((id: string, field: keyof ScratchStep, value: unknown) => {
+    setScratchSteps((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, [field]: value } : s)),
+    );
+  }, []);
+
+  const duplicateScratchStep = useCallback((id: string) => {
+    setScratchSteps((prev) => {
+      const idx = prev.findIndex((s) => s.id === id);
+      if (idx === -1) return prev;
+      const clone = { ...prev[idx], id: crypto.randomUUID() };
+      const next = [...prev];
+      next.splice(idx + 1, 0, clone);
+      return next;
+    });
+  }, []);
+
+  const moveScratchStep = useCallback((id: string, direction: 'up' | 'down') => {
+    setScratchSteps((prev) => {
+      const idx = prev.findIndex((s) => s.id === id);
+      if (idx === -1) return prev;
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[targetIdx]] = [next[targetIdx], next[idx]];
+      return next;
+    });
+  }, []);
+
+  const addOptionToStep = useCallback((stepId: string, option: string) => {
+    if (!option.trim()) return;
+    setScratchSteps((prev) =>
+      prev.map((s) =>
+        s.id === stepId ? { ...s, options: [...s.options, option.trim()] } : s,
+      ),
+    );
+  }, []);
+
+  const removeOptionFromStep = useCallback((stepId: string, optIdx: number) => {
+    setScratchSteps((prev) =>
+      prev.map((s) =>
+        s.id === stepId
+          ? { ...s, options: s.options.filter((_, i) => i !== optIdx) }
+          : s,
+      ),
+    );
+  }, []);
+
+  const handleCreateFromScratch = useCallback(async () => {
+    if (!createForm.funnel_name.trim()) return;
+    setCreateSaving(true);
+    setCreateSuccess(null);
+    try {
+      const stepsPayload = scratchSteps.map((s, i) => ({
+        step_index: i + 1,
+        title: s.title.trim() || `Step ${i + 1}`,
+        url: s.url.trim(),
+        step_type: s.step_type,
+        description: s.description.trim(),
+        cta_text: s.cta_text.trim(),
+        options: s.options,
+        input_type: s.input_type,
+      }));
+
+      const splitTrim = (str: string) =>
+        str
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+      const newFunnel = await createAffiliateSavedFunnel({
+        funnel_name: createForm.funnel_name.trim(),
+        funnel_type: createForm.funnel_type,
+        category: createForm.category,
+        brand_name: createForm.brand_name.trim() || null,
+        entry_url: createForm.entry_url.trim() || stepsPayload[0]?.url || '',
+        total_steps: stepsPayload.length,
+        steps: stepsPayload as unknown as import('@/types/database').Json,
+        tags: splitTrim(createForm.tags),
+        persuasion_techniques: splitTrim(createForm.persuasion_techniques),
+        notable_elements: splitTrim(createForm.notable_elements),
+        lead_capture_method: createForm.lead_capture_method !== 'none' ? createForm.lead_capture_method : null,
+        analysis_summary: createForm.analysis_summary.trim() || `Funnel template creato manualmente con ${stepsPayload.length} step.`,
+        raw_agent_result: 'manually_created',
+      });
+
+      setFunnels((prev) => [newFunnel, ...prev]);
+      setCreateSuccess(newFunnel.funnel_name);
+      setTimeout(() => {
+        setShowCreateModal(false);
+        setCreateSuccess(null);
+      }, 1500);
+    } catch (err) {
+      setError((err as Error)?.message ?? 'Errore durante la creazione');
+    } finally {
+      setCreateSaving(false);
+    }
+  }, [createForm, scratchSteps]);
+
   const TABS: { id: TabId; label: string; count: number; icon: typeof Target }[] = [
     { id: 'all', label: 'Tutti i Funnel', count: allCount, icon: Target },
     { id: 'quiz', label: 'Quiz Funnel', count: quizCount, icon: ListChecks },
@@ -544,17 +728,27 @@ export default function MyFunnelsPage() {
                   </p>
                 </div>
               </div>
-              {hasSelection && (
-                <div className="flex items-center gap-2 rounded-xl bg-amber-100 px-4 py-2 border border-amber-300/60">
-                  <MousePointerClick className="h-4 w-4 text-amber-700" />
-                  <span className="text-sm font-medium text-amber-800">
-                    {totalSelectedFunnels > 0 && `${totalSelectedFunnels} funnel`}
-                    {totalSelectedFunnels > 0 && totalSelectedPages > 0 && ' + '}
-                    {totalSelectedPages > 0 &&
-                      `${totalSelectedPages} pagin${totalSelectedPages === 1 ? 'a' : 'e'}`}
-                  </span>
-                </div>
-              )}
+              <div className="flex items-center gap-3">
+                {hasSelection && (
+                  <div className="flex items-center gap-2 rounded-xl bg-amber-100 px-4 py-2 border border-amber-300/60">
+                    <MousePointerClick className="h-4 w-4 text-amber-700" />
+                    <span className="text-sm font-medium text-amber-800">
+                      {totalSelectedFunnels > 0 && `${totalSelectedFunnels} funnel`}
+                      {totalSelectedFunnels > 0 && totalSelectedPages > 0 && ' + '}
+                      {totalSelectedPages > 0 &&
+                        `${totalSelectedPages} pagin${totalSelectedPages === 1 ? 'a' : 'e'}`}
+                    </span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={openCreateModal}
+                  className="flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-white shadow-md hover:bg-emerald-400 transition-colors"
+                >
+                  <PlusCircle className="h-4 w-4" />
+                  Crea Funnel da Zero
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -643,12 +837,22 @@ export default function MyFunnelsPage() {
               Usa l&apos;<strong>Affiliate Browser Chat</strong> per analizzare funnel con
               l&apos;agente AI e salvarli qui.
             </p>
-            <a
-              href="/affiliate-browser-chat"
-              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 font-medium text-white shadow-md hover:bg-amber-600 transition-colors"
-            >
-              Vai all&apos;Affiliate Browser Chat
-            </a>
+            <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
+              <button
+                type="button"
+                onClick={openCreateModal}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 font-medium text-white shadow-md hover:bg-emerald-400 transition-colors"
+              >
+                <PlusCircle className="h-5 w-5" />
+                Crea Funnel da Zero
+              </button>
+              <a
+                href="/affiliate-browser-chat"
+                className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 font-medium text-white shadow-md hover:bg-amber-600 transition-colors"
+              >
+                Vai all&apos;Affiliate Browser Chat
+              </a>
+            </div>
           </div>
         )}
 
@@ -838,8 +1042,9 @@ export default function MyFunnelsPage() {
                         Dettagli
                       </button>
                       <a
-                        href={`/quiz-creator?url=${encodeURIComponent(funnel.entry_url)}`}
+                        href={`/front-end-funnel?import_funnel_id=${funnel.id}`}
                         className="flex items-center gap-1 text-sm font-medium text-emerald-600 hover:text-emerald-700"
+                        title="Importa in Front End Funnel per clonare"
                       >
                         <Repeat className="h-4 w-4" />
                         Swipe
@@ -1179,6 +1384,423 @@ export default function MyFunnelsPage() {
                         <Save className="h-4 w-4" />
                       )}
                       {saving ? 'Salvataggio...' : 'Salva funnel'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════ Create From Scratch Modal ══════ */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-3xl max-h-[92vh] overflow-hidden rounded-2xl bg-white shadow-2xl flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-emerald-50 to-teal-50 px-6 py-4 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/20">
+                  <PlusCircle className="h-5 w-5 text-emerald-700" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800">Crea Funnel Template da Zero</h3>
+                  <p className="text-xs text-slate-500">Inserisci manualmente tutte le informazioni del funnel</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {createSuccess ? (
+                <div className="flex flex-col items-center py-10">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-100">
+                    <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+                  </div>
+                  <p className="mt-3 text-lg font-bold text-slate-800">Funnel creato!</p>
+                  <p className="mt-1 text-sm text-slate-500">&ldquo;{createSuccess}&rdquo; salvato con successo</p>
+                </div>
+              ) : (
+                <>
+                  {/* ── Section: Info base ── */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-4">
+                    <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                      <Edit3 className="h-4 w-4 text-emerald-500" />
+                      Informazioni base
+                    </h4>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Nome del funnel <span className="text-red-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={createForm.funnel_name}
+                        onChange={(e) => setCreateForm((p) => ({ ...p, funnel_name: e.target.value }))}
+                        placeholder="Es. Quiz Dimagrimento Keto"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 outline-none"
+                        autoFocus
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Tipo funnel</label>
+                        <select
+                          value={createForm.funnel_type}
+                          onChange={(e) => setCreateForm((p) => ({ ...p, funnel_type: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 outline-none"
+                        >
+                          {Object.entries(FUNNEL_TYPE_LABELS).map(([val, label]) => (
+                            <option key={val} value={val}>{label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Categoria</label>
+                        <select
+                          value={createForm.category}
+                          onChange={(e) => setCreateForm((p) => ({ ...p, category: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 outline-none"
+                        >
+                          {Object.entries(CATEGORY_LABELS).map(([val, label]) => (
+                            <option key={val} value={val}>{label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Brand (opzionale)</label>
+                        <input
+                          type="text"
+                          value={createForm.brand_name}
+                          onChange={(e) => setCreateForm((p) => ({ ...p, brand_name: e.target.value }))}
+                          placeholder="Es. KetoSlim"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Lead Capture Method</label>
+                        <select
+                          value={createForm.lead_capture_method}
+                          onChange={(e) => setCreateForm((p) => ({ ...p, lead_capture_method: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 outline-none"
+                        >
+                          <option value="none">Nessuno</option>
+                          <option value="email">Email</option>
+                          <option value="phone">Phone</option>
+                          <option value="email_phone">Email + Phone</option>
+                          <option value="form">Form completo</option>
+                          <option value="quiz">Quiz</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">Entry URL (opzionale)</label>
+                      <input
+                        type="url"
+                        value={createForm.entry_url}
+                        onChange={(e) => setCreateForm((p) => ({ ...p, entry_url: e.target.value }))}
+                        placeholder="https://example.com/funnel"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">Descrizione / Summary (opzionale)</label>
+                      <textarea
+                        value={createForm.analysis_summary}
+                        onChange={(e) => setCreateForm((p) => ({ ...p, analysis_summary: e.target.value }))}
+                        placeholder="Descrivi la struttura e lo scopo di questo funnel..."
+                        rows={2}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 outline-none resize-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* ── Section: Tags & Techniques ── */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-4">
+                    <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                      <Tag className="h-4 w-4 text-amber-500" />
+                      Tags, Tecniche &amp; Elementi
+                    </h4>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Tags <span className="text-xs text-slate-400">(separati da virgola)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={createForm.tags}
+                        onChange={(e) => setCreateForm((p) => ({ ...p, tags: e.target.value }))}
+                        placeholder="Es. quiz, weight loss, keto, supplement"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Tecniche di persuasione <span className="text-xs text-slate-400">(separate da virgola)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={createForm.persuasion_techniques}
+                        onChange={(e) => setCreateForm((p) => ({ ...p, persuasion_techniques: e.target.value }))}
+                        placeholder="Es. scarcity, social proof, authority, urgency"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                        Elementi notevoli <span className="text-xs text-slate-400">(separati da virgola)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={createForm.notable_elements}
+                        onChange={(e) => setCreateForm((p) => ({ ...p, notable_elements: e.target.value }))}
+                        placeholder="Es. video testimonial, countdown timer, money-back guarantee"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* ── Section: Steps ── */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                        <FileStack className="h-4 w-4 text-violet-500" />
+                        Step del Funnel ({scratchSteps.length})
+                      </h4>
+                      <button
+                        type="button"
+                        onClick={addScratchStep}
+                        className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-400 transition-colors"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Aggiungi Step
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
+                      {scratchSteps.map((step, idx) => (
+                        <div
+                          key={step.id}
+                          className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm"
+                        >
+                          {/* Step header */}
+                          <div className="flex items-center gap-2">
+                            <GripVertical className="h-4 w-4 text-slate-300 shrink-0" />
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700">
+                              {idx + 1}
+                            </span>
+                            <input
+                              type="text"
+                              value={step.title}
+                              onChange={(e) => updateScratchStep(step.id, 'title', e.target.value)}
+                              placeholder={`Titolo Step ${idx + 1}`}
+                              className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-800 placeholder-slate-400 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 outline-none"
+                            />
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => moveScratchStep(step.id, 'up')}
+                                disabled={idx === 0}
+                                className="rounded p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Sposta su"
+                              >
+                                <ArrowUp className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveScratchStep(step.id, 'down')}
+                                disabled={idx === scratchSteps.length - 1}
+                                className="rounded p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Sposta giù"
+                              >
+                                <ArrowDown className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => duplicateScratchStep(step.id)}
+                                className="rounded p-1 text-slate-400 hover:text-violet-600 hover:bg-violet-50"
+                                title="Duplica step"
+                              >
+                                <Copy className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeScratchStep(step.id)}
+                                disabled={scratchSteps.length <= 1}
+                                className="rounded p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Rimuovi step"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Step fields */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">Tipo Step</label>
+                              <select
+                                value={step.step_type}
+                                onChange={(e) => updateScratchStep(step.id, 'step_type', e.target.value)}
+                                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 outline-none"
+                              >
+                                {Object.entries(STEP_TYPE_LABELS).map(([val, label]) => (
+                                  <option key={val} value={val}>{label}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">Input Type</label>
+                              <select
+                                value={step.input_type}
+                                onChange={(e) => updateScratchStep(step.id, 'input_type', e.target.value)}
+                                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 outline-none"
+                              >
+                                <option value="none">Nessuno</option>
+                                <option value="single_choice">Single Choice</option>
+                                <option value="multiple_choice">Multiple Choice</option>
+                                <option value="text_input">Text Input</option>
+                                <option value="email_input">Email Input</option>
+                                <option value="slider">Slider</option>
+                                <option value="image_choice">Image Choice</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">URL pagina (opzionale)</label>
+                            <input
+                              type="url"
+                              value={step.url}
+                              onChange={(e) => updateScratchStep(step.id, 'url', e.target.value)}
+                              placeholder="https://..."
+                              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 outline-none"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Descrizione (opzionale)</label>
+                            <textarea
+                              value={step.description}
+                              onChange={(e) => updateScratchStep(step.id, 'description', e.target.value)}
+                              placeholder="Cosa fa questo step..."
+                              rows={2}
+                              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 outline-none resize-none"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">CTA Text (opzionale)</label>
+                            <input
+                              type="text"
+                              value={step.cta_text}
+                              onChange={(e) => updateScratchStep(step.id, 'cta_text', e.target.value)}
+                              placeholder="Es. Continua, Scopri ora, Ordina adesso"
+                              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 outline-none"
+                            />
+                          </div>
+
+                          {/* Options */}
+                          <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">
+                              Opzioni/Risposte <span className="text-slate-400">(per quiz/scelta)</span>
+                            </label>
+                            <div className="flex flex-wrap gap-1.5 mb-2">
+                              {step.options.map((opt, oi) => (
+                                <span
+                                  key={oi}
+                                  className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-2 py-0.5 text-xs text-violet-700 border border-violet-200/60"
+                                >
+                                  {opt}
+                                  <button
+                                    type="button"
+                                    onClick={() => removeOptionFromStep(step.id, oi)}
+                                    className="text-violet-400 hover:text-red-500"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                placeholder="Aggiungi opzione..."
+                                value={editingStepOptionIdx?.stepId === step.id ? editingStepOptionIdx.text : ''}
+                                onChange={(e) => setEditingStepOptionIdx({ stepId: step.id, text: e.target.value })}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && editingStepOptionIdx?.stepId === step.id) {
+                                    e.preventDefault();
+                                    addOptionToStep(step.id, editingStepOptionIdx.text);
+                                    setEditingStepOptionIdx(null);
+                                  }
+                                }}
+                                className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:border-violet-400 focus:ring-1 focus:ring-violet-200 outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (editingStepOptionIdx?.stepId === step.id) {
+                                    addOptionToStep(step.id, editingStepOptionIdx.text);
+                                    setEditingStepOptionIdx(null);
+                                  }
+                                }}
+                                className="rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-200 transition-colors"
+                              >
+                                <Plus className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={addScratchStep}
+                      className="w-full rounded-xl border-2 border-dashed border-slate-300 py-3 text-sm font-medium text-slate-500 hover:border-emerald-400 hover:text-emerald-600 hover:bg-emerald-50/50 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Aggiungi un altro step
+                    </button>
+                  </div>
+
+                  {/* ── Footer buttons ── */}
+                  <div className="flex items-center justify-end gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateModal(false)}
+                      className="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+                    >
+                      Annulla
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCreateFromScratch}
+                      disabled={createSaving || !createForm.funnel_name.trim()}
+                      className="rounded-xl bg-emerald-500 px-6 py-2.5 text-sm font-bold text-white shadow-md hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                    >
+                      {createSaving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
+                      {createSaving ? 'Creazione...' : 'Crea Funnel'}
                     </button>
                   </div>
                 </>
