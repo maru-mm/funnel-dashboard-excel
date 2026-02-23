@@ -10,7 +10,10 @@ import {
   CheckCircle, Strikethrough, List, ListOrdered, Minus,
   Sparkles, Loader2, Wand2, ImagePlus, Bot, Zap, RotateCcw, Send,
   Smartphone, Monitor,
+  BookmarkPlus, Library, Tag, Clock, FileCode, Search,
+  BookOpen, ArrowDownToLine, Eye as EyeIcon,
 } from 'lucide-react';
+import { SavedSection, SECTION_TYPE_OPTIONS } from '@/types';
 
 /* ─────────── Types ─────────── */
 
@@ -203,6 +206,27 @@ const EDITOR_SCRIPT = `
             className:typeof c.className==='string'?c.className.substring(0,100):'',
             textPreview:(c.textContent||'').substring(0,80).trim(),path:gp(c)});}
         window.parent.postMessage({type:'sections-list',data:secs},'*');break;
+      case 'cmd-get-selected-full-html':
+        if(sel){
+          var savedO=sel.style.outline,savedOO=sel.style.outlineOffset;
+          sel.style.outline='';sel.style.outlineOffset='';
+          var fullOuter=sel.outerHTML;
+          sel.style.outline=savedO;sel.style.outlineOffset=savedOO;
+          window.parent.postMessage({type:'selected-full-html',data:fullOuter},'*');
+        }break;
+      case 'cmd-insert-section':
+        if(m.html){
+          var tmp=document.createElement('div');tmp.innerHTML=m.html;
+          var nodes=Array.from(tmp.children);
+          var target=sel||document.body.lastElementChild;
+          if(target&&target.parentElement){
+            nodes.forEach(function(n){target.parentElement.insertBefore(n,target.nextSibling);});
+          }else{
+            nodes.forEach(function(n){document.body.appendChild(n);});
+          }
+          sendHtml();
+          window.parent.postMessage({type:'section-inserted',data:true},'*');
+        }break;
     }
   });
 
@@ -233,6 +257,25 @@ function stripEditorScript(html: string): string {
 }
 
 const FONT_SIZES = ['10px','12px','14px','16px','18px','20px','24px','28px','32px','36px','40px','48px','56px','64px','72px'];
+
+const SAVED_SECTIONS_KEY = 'funnel-swiper-saved-sections';
+
+function loadSavedSections(): SavedSection[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(SAVED_SECTIONS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function persistSavedSections(sections: SavedSection[]) {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(SAVED_SECTIONS_KEY, JSON.stringify(sections));
+}
+
+function generateId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
+}
 
 function rgbToHex(rgb: string): string {
   if (!rgb || rgb === 'transparent' || rgb.startsWith('#')) return rgb || '#000000';
@@ -300,6 +343,26 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
     { label: 'Health / Natural', prompt: 'Trasforma in stile salute/naturale: colori verdi, beige, marroni terrosi, font puliti e moderni, immagini di natura, toni caldi, testi che enfatizzano naturalità, benessere, ingredienti puri.' },
     { label: 'Tech / Futuristico', prompt: 'Trasforma in stile tech futuristico: colori cyan, viola, nero, gradienti neon, font sans-serif moderni, bordi sottili luminosi, effetti glow, testi con tono innovativo e tecnologico.' },
   ]);
+
+  /* ── Section Library (state only) ── */
+  const [savedSections, setSavedSections] = useState<SavedSection[]>([]);
+  const [showSectionLibrary, setShowSectionLibrary] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveSectionName, setSaveSectionName] = useState('');
+  const [saveSectionType, setSaveSectionType] = useState('other');
+  const [saveSectionTags, setSaveSectionTags] = useState('');
+  const [saveSectionAiRewrite, setSaveSectionAiRewrite] = useState(false);
+  const [saveSectionModel, setSaveSectionModel] = useState<'claude' | 'gemini'>('claude');
+  const [saveSectionRunning, setSaveSectionRunning] = useState(false);
+  const [saveSectionError, setSaveSectionError] = useState('');
+  const [saveSectionSuccess, setSaveSectionSuccess] = useState(false);
+  const [pendingSectionHtml, setPendingSectionHtml] = useState('');
+  const [librarySearch, setLibrarySearch] = useState('');
+  const [libraryFilterType, setLibraryFilterType] = useState('all');
+  const [previewSectionId, setPreviewSectionId] = useState<string | null>(null);
+  const [importingId, setImportingId] = useState<string | null>(null);
+
+  useEffect(() => { setSavedSections(loadSavedSections()); }, []);
 
   /* ── Undo/Redo ── */
   const pushUndo = useCallback((html: string) => {
@@ -380,11 +443,102 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
         case 'sections-list':
           setSections(e.data.data);
           break;
+        case 'selected-full-html':
+          setPendingSectionHtml(e.data.data);
+          setShowSaveDialog(true);
+          break;
+        case 'section-inserted':
+          break;
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
   }, [sendToIframe, pushUndo, editorViewport, mobileHtml]);
+
+  /* ── Section Library (callbacks – needs sendToIframe) ── */
+  const handleRequestSaveSection = useCallback(() => {
+    sendToIframe({ type: 'cmd-get-selected-full-html' });
+    setSaveSectionName('');
+    setSaveSectionType('other');
+    setSaveSectionTags('');
+    setSaveSectionAiRewrite(false);
+    setSaveSectionError('');
+    setSaveSectionSuccess(false);
+  }, [sendToIframe]);
+
+  const handleSaveSection = useCallback(async () => {
+    if (!pendingSectionHtml || !saveSectionName.trim()) return;
+    setSaveSectionRunning(true);
+    setSaveSectionError('');
+
+    try {
+      let finalHtml = pendingSectionHtml;
+
+      if (saveSectionAiRewrite) {
+        const res = await fetch('/api/rewrite-section', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            html: pendingSectionHtml,
+            model: saveSectionModel,
+            context: pageTitle || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Errore AI rewrite');
+        finalHtml = data.html;
+      }
+
+      const newSection: SavedSection = {
+        id: generateId(),
+        name: saveSectionName.trim(),
+        html: finalHtml,
+        sectionType: saveSectionType,
+        tags: saveSectionTags.split(',').map(t => t.trim()).filter(Boolean),
+        textPreview: finalHtml.replace(/<[^>]*>/g, '').substring(0, 120).trim(),
+        sourcePageTitle: pageTitle || undefined,
+        aiRewritten: saveSectionAiRewrite,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      const updated = [newSection, ...savedSections];
+      setSavedSections(updated);
+      persistSavedSections(updated);
+      setSaveSectionSuccess(true);
+      setTimeout(() => {
+        setShowSaveDialog(false);
+        setSaveSectionSuccess(false);
+      }, 1500);
+    } catch (err) {
+      setSaveSectionError(err instanceof Error ? err.message : 'Errore sconosciuto');
+    } finally {
+      setSaveSectionRunning(false);
+    }
+  }, [pendingSectionHtml, saveSectionName, saveSectionType, saveSectionTags, saveSectionAiRewrite, saveSectionModel, savedSections, pageTitle]);
+
+  const handleDeleteSection = useCallback((id: string) => {
+    const updated = savedSections.filter(s => s.id !== id);
+    setSavedSections(updated);
+    persistSavedSections(updated);
+  }, [savedSections]);
+
+  const handleImportSection = useCallback((section: SavedSection) => {
+    setImportingId(section.id);
+    sendToIframe({ type: 'cmd-insert-section', html: section.html });
+    setTimeout(() => setImportingId(null), 1500);
+  }, [sendToIframe]);
+
+  const filteredLibrarySections = savedSections.filter(s => {
+    if (libraryFilterType !== 'all' && s.sectionType !== libraryFilterType) return false;
+    if (librarySearch.trim()) {
+      const q = librarySearch.toLowerCase();
+      return s.name.toLowerCase().includes(q) ||
+             s.textPreview.toLowerCase().includes(q) ||
+             s.tags.some(t => t.toLowerCase().includes(q));
+    }
+    return true;
+  });
 
   /* ── Mode switching ── */
   const switchMode = useCallback((newMode: EditorMode) => {
@@ -757,7 +911,19 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
 
           <div className="flex-1" />
 
-          {/* Sidebar + Sections toggles */}
+          {/* Section Library + Save + Sections toggles */}
+          {el && (
+            <button onClick={handleRequestSaveSection}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-emerald-600 hover:bg-emerald-50 transition-colors"
+              title="Salva sezione selezionata nella libreria">
+              <BookmarkPlus className="h-3.5 w-3.5" />Salva Sezione
+            </button>
+          )}
+          <button onClick={() => setShowSectionLibrary(!showSectionLibrary)}
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors ${
+              showSectionLibrary ? 'bg-indigo-100 text-indigo-700' : 'text-indigo-500 hover:bg-indigo-50'}`}>
+            <Library className="h-3.5 w-3.5" />Libreria ({savedSections.length})
+          </button>
           <button onClick={() => setShowSections(!showSections)}
             className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors ${
               showSections ? 'bg-amber-100 text-amber-700' : 'text-slate-500 hover:bg-slate-100'}`}>
@@ -1125,6 +1291,17 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
                     <ActionBtn icon={Trash2} label="Elimina" onClick={() => sendToIframe({ type: 'cmd-delete' })} danger />
                   </div>
                 </div>
+
+                {/* Save to Library */}
+                <div className="p-3">
+                  <button
+                    onClick={handleRequestSaveSection}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 transition-all shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30"
+                  >
+                    <BookmarkPlus className="h-4 w-4" />
+                    Salva nella Libreria
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center h-full p-6 text-center">
@@ -1143,6 +1320,328 @@ export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSav
           </div>
         )}
       </div>
+
+      {/* ═══ Save Section Dialog ═══ */}
+      {showSaveDialog && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-[520px] max-w-[95vw] overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white">
+              <div className="flex items-center gap-2.5">
+                <BookmarkPlus className="h-5 w-5" />
+                <div>
+                  <h3 className="text-sm font-bold">Salva Sezione nella Libreria</h3>
+                  <p className="text-[10px] text-emerald-100">Rendi la sezione riutilizzabile su altri funnel</p>
+                </div>
+              </div>
+              <button onClick={() => setShowSaveDialog(false)} className="p-1 rounded-lg hover:bg-white/20 transition-colors">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Preview */}
+              <div className="bg-slate-50 rounded-xl border border-slate-200 p-3">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Anteprima sezione</p>
+                <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
+                  {pendingSectionHtml.replace(/<[^>]*>/g, '').substring(0, 200) || '(sezione vuota)'}
+                </p>
+                <p className="text-[10px] text-slate-400 mt-1">{pendingSectionHtml.length.toLocaleString()} caratteri HTML</p>
+              </div>
+
+              {/* Name */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 mb-1 block">Nome sezione *</label>
+                <input
+                  type="text"
+                  value={saveSectionName}
+                  onChange={(e) => setSaveSectionName(e.target.value)}
+                  placeholder="Es: Hero con video testimonial, CTA urgenza rossa..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all"
+                  autoFocus
+                />
+              </div>
+
+              {/* Type + Tags */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">Tipo sezione</label>
+                  <select
+                    value={saveSectionType}
+                    onChange={(e) => setSaveSectionType(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:border-emerald-500 outline-none"
+                  >
+                    {SECTION_TYPE_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 mb-1 block">Tag (virgola sep.)</label>
+                  <input
+                    type="text"
+                    value={saveSectionTags}
+                    onChange={(e) => setSaveSectionTags(e.target.value)}
+                    placeholder="cta, rosso, urgenza..."
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:border-emerald-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* AI Rewrite toggle */}
+              <div className="bg-violet-50 rounded-xl border border-violet-200 p-3">
+                <label className="flex items-center justify-between cursor-pointer">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-violet-500/10">
+                      <Sparkles className="h-4 w-4 text-violet-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-violet-800">Riscrivi con AI</p>
+                      <p className="text-[10px] text-violet-500">Rendi la sezione standalone con CSS scoped e pulizia completa</p>
+                    </div>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      checked={saveSectionAiRewrite}
+                      onChange={(e) => setSaveSectionAiRewrite(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-10 h-5 bg-slate-300 rounded-full peer-checked:bg-violet-600 transition-colors" />
+                    <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5 shadow" />
+                  </div>
+                </label>
+
+                {saveSectionAiRewrite && (
+                  <div className="mt-3 flex items-center gap-2">
+                    <span className="text-[10px] text-violet-500">Modello:</span>
+                    <div className="flex bg-white rounded-lg p-0.5 border border-violet-200">
+                      <button
+                        onClick={() => setSaveSectionModel('claude')}
+                        className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all ${
+                          saveSectionModel === 'claude' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-600'
+                        }`}
+                      >Claude</button>
+                      <button
+                        onClick={() => setSaveSectionModel('gemini')}
+                        className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all ${
+                          saveSectionModel === 'gemini' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-slate-600'
+                        }`}
+                      >Gemini</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Error */}
+              {saveSectionError && (
+                <div className="p-2.5 rounded-lg bg-red-50 border border-red-200">
+                  <p className="text-xs text-red-600 font-medium">{saveSectionError}</p>
+                </div>
+              )}
+
+              {/* Success */}
+              {saveSectionSuccess && (
+                <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center gap-2">
+                  <CheckCircle className="h-4 w-4 text-emerald-600" />
+                  <p className="text-xs text-emerald-700 font-semibold">Sezione salvata nella libreria!</p>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  onClick={() => setShowSaveDialog(false)}
+                  disabled={saveSectionRunning}
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+                >Annulla</button>
+                <button
+                  onClick={handleSaveSection}
+                  disabled={!saveSectionName.trim() || saveSectionRunning || saveSectionSuccess}
+                  className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
+                >
+                  {saveSectionRunning ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" />Salvataggio{saveSectionAiRewrite ? ' + AI...' : '...'}</>
+                  ) : (
+                    <><Save className="h-4 w-4" />Salva nella Libreria</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Section Library Panel ═══ */}
+      {showSectionLibrary && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-[780px] max-w-[95vw] max-h-[85vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white shrink-0">
+              <div className="flex items-center gap-2.5">
+                <Library className="h-5 w-5" />
+                <div>
+                  <h3 className="text-sm font-bold">Libreria Sezioni Salvate</h3>
+                  <p className="text-[10px] text-indigo-200">{savedSections.length} sezioni disponibili</p>
+                </div>
+              </div>
+              <button onClick={() => setShowSectionLibrary(false)} className="p-1 rounded-lg hover:bg-white/20 transition-colors">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Filters */}
+            <div className="px-5 py-3 border-b border-slate-200 bg-slate-50 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={librarySearch}
+                    onChange={(e) => setLibrarySearch(e.target.value)}
+                    placeholder="Cerca per nome, testo o tag..."
+                    className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                  />
+                </div>
+                <select
+                  value={libraryFilterType}
+                  onChange={(e) => setLibraryFilterType(e.target.value)}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:border-indigo-500 outline-none"
+                >
+                  <option value="all">Tutti i tipi</option>
+                  {SECTION_TYPE_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Sections Grid */}
+            <div className="flex-1 overflow-y-auto p-4">
+              {filteredLibrarySections.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <BookOpen className="h-12 w-12 text-slate-200 mb-3" />
+                  <p className="text-sm font-medium text-slate-500">
+                    {savedSections.length === 0 ? 'Nessuna sezione salvata' : 'Nessun risultato per questa ricerca'}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    {savedSections.length === 0
+                      ? 'Seleziona un elemento nell\'editor e clicca "Salva Sezione" per iniziare'
+                      : 'Prova a cambiare i filtri di ricerca'}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {filteredLibrarySections.map((section) => (
+                    <div
+                      key={section.id}
+                      className="bg-white rounded-xl border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all group overflow-hidden"
+                    >
+                      {/* Section Card Header */}
+                      <div className="px-3.5 pt-3 pb-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-sm font-bold text-slate-800 truncate">{section.name}</h4>
+                            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-full">
+                                <Tag className="h-2.5 w-2.5" />
+                                {SECTION_TYPE_OPTIONS.find(o => o.value === section.sectionType)?.label || section.sectionType}
+                              </span>
+                              {section.aiRewritten && (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded-full">
+                                  <Sparkles className="h-2.5 w-2.5" />AI
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Text preview */}
+                      <div className="px-3.5 pb-2">
+                        <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2">
+                          {section.textPreview || '(vuoto)'}
+                        </p>
+                      </div>
+
+                      {/* Tags */}
+                      {section.tags.length > 0 && (
+                        <div className="px-3.5 pb-2 flex items-center gap-1 flex-wrap">
+                          {section.tags.map((tag, i) => (
+                            <span key={i} className="text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Preview iframe (collapsible) */}
+                      {previewSectionId === section.id && (
+                        <div className="mx-3.5 mb-2 rounded-lg overflow-hidden border border-slate-200 bg-white" style={{ height: '180px' }}>
+                          <iframe
+                            srcDoc={section.html}
+                            className="w-full h-full border-0"
+                            title={`Preview: ${section.name}`}
+                            sandbox="allow-same-origin"
+                            style={{ transform: 'scale(0.5)', transformOrigin: 'top left', width: '200%', height: '200%' }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Actions */}
+                      <div className="flex items-center justify-between px-3.5 py-2 bg-slate-50 border-t border-slate-100">
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                          <Clock className="h-3 w-3" />
+                          {new Date(section.createdAt).toLocaleDateString('it-IT')}
+                          <span className="text-slate-300">·</span>
+                          <FileCode className="h-3 w-3" />
+                          {(section.html.length / 1024).toFixed(1)}KB
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setPreviewSectionId(previewSectionId === section.id ? null : section.id)}
+                            className="p-1.5 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                            title="Anteprima"
+                          >
+                            <EyeIcon className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(section.html);
+                            }}
+                            className="p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                            title="Copia HTML"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleImportSection(section)}
+                            disabled={importingId === section.id}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 transition-all shadow-sm"
+                            title="Importa nella pagina corrente"
+                          >
+                            {importingId === section.id ? (
+                              <><CheckCircle className="h-3 w-3" />Importata!</>
+                            ) : (
+                              <><ArrowDownToLine className="h-3 w-3" />Importa</>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => handleDeleteSection(section.id)}
+                            className="p-1.5 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                            title="Elimina sezione"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ AI Edit Panel (Floating) ═══ */}
       {showAiEditPanel && (
