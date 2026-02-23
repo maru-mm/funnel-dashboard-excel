@@ -9,6 +9,7 @@ import {
   Type, Save, MousePointer, Heading1, Heading2, Heading3,
   CheckCircle, Strikethrough, List, ListOrdered, Minus,
   Sparkles, Loader2, Wand2, ImagePlus, Bot, Zap, RotateCcw, Send,
+  Smartphone, Monitor,
 } from 'lucide-react';
 
 /* ─────────── Types ─────────── */
@@ -42,7 +43,8 @@ interface SectionInfo {
 
 interface VisualHtmlEditorProps {
   initialHtml: string;
-  onSave: (html: string) => void;
+  initialMobileHtml?: string;
+  onSave: (html: string, mobileHtml?: string) => void;
   onClose: () => void;
   pageTitle?: string;
 }
@@ -251,7 +253,7 @@ const TAG_LABELS: Record<string, string> = {
 
 /* ─────────── Component ─────────── */
 
-export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTitle }: VisualHtmlEditorProps) {
+export default function VisualHtmlEditor({ initialHtml, initialMobileHtml, onSave, onClose, pageTitle }: VisualHtmlEditorProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [mode, setMode] = useState<EditorMode>('visual');
   const [selectedElement, setSelectedElement] = useState<ElementInfo | null>(null);
@@ -267,6 +269,12 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
   const undoStack = useRef<string[]>([initialHtml]);
   const redoStack = useRef<string[]>([]);
   const undoIdx = useRef(0);
+
+  /* ── Mobile viewport ── */
+  const [editorViewport, setEditorViewport] = useState<'desktop' | 'mobile'>('desktop');
+  const [mobileHtml, setMobileHtml] = useState(initialMobileHtml || '');
+  const [mobileCodeHtml, setMobileCodeHtml] = useState(initialMobileHtml || '');
+  const hasMobile = !!(initialMobileHtml || mobileHtml);
 
   /* ── AI Image Generation ── */
   const [aiPrompt, setAiPrompt] = useState('');
@@ -354,12 +362,20 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
           break;
         case 'html-updated': {
           const clean = stripEditorScript(e.data.data);
-          setCurrentHtml(clean);
-          pushUndo(clean);
+          if (editorViewport === 'mobile' && mobileHtml) {
+            setMobileHtml(clean);
+          } else {
+            setCurrentHtml(clean);
+            pushUndo(clean);
+          }
           break;
         }
         case 'clean-html':
-          setCurrentHtml(stripEditorScript(e.data.data));
+          if (editorViewport === 'mobile' && mobileHtml) {
+            setMobileHtml(stripEditorScript(e.data.data));
+          } else {
+            setCurrentHtml(stripEditorScript(e.data.data));
+          }
           break;
         case 'sections-list':
           setSections(e.data.data);
@@ -368,23 +384,31 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [sendToIframe, pushUndo]);
+  }, [sendToIframe, pushUndo, editorViewport, mobileHtml]);
 
   /* ── Mode switching ── */
   const switchMode = useCallback((newMode: EditorMode) => {
     if (newMode === mode) return;
     if (mode === 'code' && newMode === 'visual') {
-      setCurrentHtml(codeHtml);
-      pushUndo(codeHtml);
+      if (editorViewport === 'mobile' && mobileHtml) {
+        setMobileHtml(mobileCodeHtml);
+      } else {
+        setCurrentHtml(codeHtml);
+        pushUndo(codeHtml);
+      }
     }
     if (mode === 'visual' && newMode === 'code') {
       sendToIframe({ type: 'cmd-get-html' });
-      setCodeHtml(currentHtml);
+      if (editorViewport === 'mobile' && mobileHtml) {
+        setMobileCodeHtml(mobileHtml);
+      } else {
+        setCodeHtml(currentHtml);
+      }
     }
     setMode(newMode);
     setSelectedElement(null);
     setIsEditing(false);
-  }, [mode, codeHtml, currentHtml, sendToIframe, pushUndo]);
+  }, [mode, codeHtml, mobileCodeHtml, currentHtml, mobileHtml, editorViewport, sendToIframe, pushUndo]);
 
   /* ── Commands ── */
   const execCmd = (cmd: string, val?: string) => sendToIframe({ type: 'cmd-exec', command: cmd, value: val });
@@ -393,7 +417,7 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
 
   /* ── Export ── */
   const handleSave = () => {
-    onSave(currentHtml);
+    onSave(currentHtml, mobileHtml || undefined);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -454,7 +478,7 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          html: currentHtml,
+          html: editorViewport === 'mobile' && mobileHtml ? mobileHtml : currentHtml,
           prompt: aiEditPrompt,
           model: aiEditModel,
         }),
@@ -496,10 +520,16 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
                 break;
               case 'result':
                 if (data.html) {
-                  setAiEditHistory(prev => [...prev, currentHtml]);
-                  setCurrentHtml(data.html);
-                  setCodeHtml(data.html);
-                  pushUndo(data.html);
+                  if (editorViewport === 'mobile' && mobileHtml) {
+                    setAiEditHistory(prev => [...prev, mobileHtml]);
+                    setMobileHtml(data.html);
+                    setMobileCodeHtml(data.html);
+                  } else {
+                    setAiEditHistory(prev => [...prev, currentHtml]);
+                    setCurrentHtml(data.html);
+                    setCodeHtml(data.html);
+                    pushUndo(data.html);
+                  }
                 }
                 break;
               case 'error':
@@ -526,10 +556,15 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
     if (aiEditHistory.length === 0) return;
     const prev = aiEditHistory[aiEditHistory.length - 1];
     setAiEditHistory(h => h.slice(0, -1));
-    setCurrentHtml(prev);
-    setCodeHtml(prev);
-    pushUndo(prev);
-  }, [aiEditHistory, pushUndo]);
+    if (editorViewport === 'mobile' && mobileHtml) {
+      setMobileHtml(prev);
+      setMobileCodeHtml(prev);
+    } else {
+      setCurrentHtml(prev);
+      setCodeHtml(prev);
+      pushUndo(prev);
+    }
+  }, [aiEditHistory, editorViewport, mobileHtml, pushUndo]);
 
   /* ── Keyboard shortcuts ── */
   useEffect(() => {
@@ -545,7 +580,8 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  const editorSrcDoc = prepareEditorHtml(currentHtml);
+  const activeHtml = editorViewport === 'mobile' && mobileHtml ? mobileHtml : currentHtml;
+  const editorSrcDoc = prepareEditorHtml(activeHtml);
   const el = selectedElement;
 
   return (
@@ -589,6 +625,35 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
               </button>
             ))}
           </div>
+
+          {/* Viewport Switcher (Desktop/Mobile) */}
+          {hasMobile && (
+            <>
+              <div className="w-px h-6 bg-slate-700 mx-1" />
+              <div className="flex bg-slate-800 rounded-lg p-0.5 gap-0.5">
+                <button
+                  onClick={() => setEditorViewport('desktop')}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    editorViewport === 'desktop'
+                      ? 'bg-blue-500 text-white shadow'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                  }`}
+                >
+                  <Monitor className="h-3.5 w-3.5" />Desktop
+                </button>
+                <button
+                  onClick={() => setEditorViewport('mobile')}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    editorViewport === 'mobile'
+                      ? 'bg-blue-500 text-white shadow'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                  }`}
+                >
+                  <Smartphone className="h-3.5 w-3.5" />Mobile
+                </button>
+              </div>
+            </>
+          )}
 
           <div className="w-px h-6 bg-slate-700 mx-1" />
 
@@ -745,12 +810,18 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
           } : {}}>
 
           {mode === 'visual' && (
-            <div className="absolute inset-2 rounded-xl overflow-hidden shadow-xl border border-slate-200 bg-white">
+            <div className={`absolute inset-2 rounded-xl overflow-hidden shadow-xl border bg-white flex items-start justify-center ${
+              editorViewport === 'mobile' && mobileHtml ? 'border-blue-300' : 'border-slate-200'
+            }`}>
               <iframe
                 ref={iframeRef}
-                key={currentHtml.length + '_' + undoIdx.current}
+                key={`${editorViewport}-${activeHtml.length}-${undoIdx.current}`}
                 srcDoc={editorSrcDoc}
-                className="w-full h-full border-0"
+                className={`h-full border-0 transition-all duration-300 ${
+                  editorViewport === 'mobile' && mobileHtml
+                    ? 'w-[390px] border-x-2 border-gray-300 shadow-2xl'
+                    : 'w-full'
+                }`}
                 title="Visual Editor Canvas"
                 sandbox="allow-scripts allow-same-origin"
               />
@@ -768,12 +839,22 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
           {mode === 'code' && (
             <div className="h-full flex flex-col">
               <div className="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
-                <span className="text-xs text-slate-400 font-mono">HTML</span>
-                <span className="text-[10px] text-slate-500">{codeHtml.length.toLocaleString()} caratteri</span>
+                <span className="text-xs text-slate-400 font-mono">
+                  HTML {editorViewport === 'mobile' && mobileHtml ? '(Mobile)' : '(Desktop)'}
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  {(editorViewport === 'mobile' && mobileCodeHtml ? mobileCodeHtml : codeHtml).length.toLocaleString()} caratteri
+                </span>
               </div>
               <textarea
-                value={codeHtml}
-                onChange={(e) => setCodeHtml(e.target.value)}
+                value={editorViewport === 'mobile' && mobileHtml ? mobileCodeHtml : codeHtml}
+                onChange={(e) => {
+                  if (editorViewport === 'mobile' && mobileHtml) {
+                    setMobileCodeHtml(e.target.value);
+                  } else {
+                    setCodeHtml(e.target.value);
+                  }
+                }}
                 className="flex-1 w-full bg-slate-900 text-slate-300 font-mono text-sm p-4 resize-none outline-none leading-relaxed"
                 spellCheck={false}
               />
@@ -781,12 +862,18 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
           )}
 
           {mode === 'preview' && (
-            <iframe
-              srcDoc={currentHtml}
-              className="w-full h-full border-0"
-              title="Preview"
-              sandbox="allow-scripts allow-same-origin"
-            />
+            <div className="w-full h-full flex items-start justify-center bg-gray-100 overflow-auto">
+              <iframe
+                srcDoc={activeHtml}
+                className={`h-full border-0 transition-all duration-300 ${
+                  editorViewport === 'mobile' && mobileHtml
+                    ? 'w-[390px] shadow-2xl border-2 border-gray-300 rounded-[2rem] my-4'
+                    : 'w-full'
+                }`}
+                title="Preview"
+                sandbox="allow-scripts allow-same-origin"
+              />
+            </div>
           )}
         </div>
 
@@ -1220,8 +1307,13 @@ export default function VisualHtmlEditor({ initialHtml, onSave, onClose, pageTit
                 <span>{Math.round(el.rect.width)}×{Math.round(el.rect.height)}px</span>
               )}
             </div>
-            <span className="text-[10px] text-slate-400">
-              {currentHtml.length.toLocaleString()} caratteri
+            <span className="text-[10px] text-slate-400 flex items-center gap-2">
+              {editorViewport === 'mobile' && mobileHtml && (
+                <span className="flex items-center gap-1 text-blue-400">
+                  <Smartphone className="h-3 w-3" /> Mobile
+                </span>
+              )}
+              {activeHtml.length.toLocaleString()} caratteri
             </span>
           </div>
         </div>

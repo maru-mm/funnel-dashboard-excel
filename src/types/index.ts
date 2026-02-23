@@ -176,6 +176,7 @@ export interface QuizTemplate {
 
 export interface ClonedPageData {
   html: string;
+  mobileHtml?: string;
   title: string;
   method_used: string;
   content_length: number;
@@ -755,6 +756,52 @@ export interface GeneratedBranding {
 }
 
 export type BrandingGenerationStatus = 'idle' | 'generating' | 'completed' | 'failed';
+
+// =====================================================
+// SCHEDULED BROWSER JOBS — Job automatici programmabili
+// =====================================================
+
+// =====================================================
+// SAVED SECTIONS LIBRARY — Reusable section blocks
+// =====================================================
+
+export interface SavedSection {
+  id: string;
+  name: string;
+  html: string;
+  /** Approximate section type (hero, testimonials, cta, etc.) */
+  sectionType: string;
+  tags: string[];
+  /** Text preview for quick identification */
+  textPreview: string;
+  /** Source page URL from which the section was extracted */
+  sourceUrl?: string;
+  /** Source page title */
+  sourcePageTitle?: string;
+  /** Whether AI has rewritten the section to be standalone */
+  aiRewritten: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const SECTION_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'hero', label: 'Hero / Above the Fold' },
+  { value: 'features', label: 'Features / Caratteristiche' },
+  { value: 'benefits', label: 'Benefits / Benefici' },
+  { value: 'testimonials', label: 'Testimonianze' },
+  { value: 'social_proof', label: 'Social Proof' },
+  { value: 'pricing', label: 'Prezzi / Offerta' },
+  { value: 'cta', label: 'Call to Action' },
+  { value: 'faq', label: 'FAQ' },
+  { value: 'header', label: 'Header / Nav' },
+  { value: 'footer', label: 'Footer' },
+  { value: 'form', label: 'Form / Opt-in' },
+  { value: 'video', label: 'Video Section' },
+  { value: 'comparison', label: 'Comparison / Vs' },
+  { value: 'guarantee', label: 'Garanzia' },
+  { value: 'urgency', label: 'Urgency / Scarcity' },
+  { value: 'other', label: 'Altro' },
+];
 
 // =====================================================
 // SCHEDULED BROWSER JOBS — Job automatici programmabili

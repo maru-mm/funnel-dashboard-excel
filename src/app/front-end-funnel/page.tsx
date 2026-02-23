@@ -46,6 +46,8 @@ import {
   Paintbrush,
   BookOpen,
   Star,
+  Smartphone,
+  Monitor,
 } from 'lucide-react';
 import VisualHtmlEditor from '@/components/VisualHtmlEditor';
 
@@ -266,9 +268,10 @@ export default function FrontEndFunnel() {
     isOpen: boolean;
     title: string;
     html: string;
+    mobileHtml: string;
     iframeSrc: string;
     metadata: { method: string; length: number; duration: number } | null;
-  }>({ isOpen: false, title: '', html: '', iframeSrc: '', metadata: null });
+  }>({ isOpen: false, title: '', html: '', mobileHtml: '', iframeSrc: '', metadata: null });
 
   const [showVisualEditor, setShowVisualEditor] = useState(false);
 
@@ -322,6 +325,8 @@ export default function FrontEndFunnel() {
     url: string;
   }>({ isOpen: false, pageId: '', pageName: '', url: '' });
   const [cloneMode, setCloneMode] = useState<'identical' | 'rewrite' | 'translate'>('identical');
+  const [cloneMobile, setCloneMobile] = useState(true);
+  const [previewViewport, setPreviewViewport] = useState<'desktop' | 'mobile'>('desktop');
   const [cloneConfig, setCloneConfig] = useState({
     productName: '',
     productDescription: '',
@@ -601,6 +606,7 @@ export default function FrontEndFunnel() {
           isOpen: true,
           title: page?.name || 'Swipe Result',
           html: '',
+          mobileHtml: '',
           iframeSrc: api.result(jobId),
           metadata: null,
         });
@@ -798,26 +804,28 @@ export default function FrontEndFunnel() {
         const response = await fetch('/api/clone-funnel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, cloneMode: 'identical' }),
+          body: JSON.stringify({ url, cloneMode: 'identical', viewport: cloneMobile ? 'both' : 'desktop' }),
         });
         const data = await response.json();
         if (!response.ok || data.error) throw new Error(data.error || 'Clone failed');
 
-        // Warn if page is JS-rendered
         if (data.warning) {
           console.warn('⚠️ Clone warning:', data.warning);
         }
 
         const clonedHtml = sanitizeClonedHtml(data.content, url);
+        const clonedMobileHtml = data.mobileContent ? sanitizeClonedHtml(data.mobileContent, url) : '';
+        const mobileInfo = clonedMobileHtml ? ` + mobile ${(data.mobileFinalSize || 0).toLocaleString()}` : '';
         const statusMsg = data.jsRendered
           ? `⚠️ Pagina JS-rendered (${(data.finalSize || 0).toLocaleString()} chars) - contenuto potrebbe essere incompleto`
-          : `Clone OK (${(data.finalSize || data.content?.length || 0).toLocaleString()} chars${data.cssInlined ? ', CSS inlined' : ''})`;
+          : `Clone OK (${(data.finalSize || data.content?.length || 0).toLocaleString()} chars${data.cssInlined ? ', CSS inlined' : ''}${mobileInfo})`;
 
         updateFunnelPage(pageId, {
           swipeStatus: 'completed',
           swipeResult: statusMsg,
           clonedData: {
             html: clonedHtml,
+            mobileHtml: clonedMobileHtml || undefined,
             title: pageName,
             method_used: 'identical',
             content_length: data.finalSize || data.content?.length || 0,
@@ -826,10 +834,12 @@ export default function FrontEndFunnel() {
           },
         });
 
+        setPreviewViewport('desktop');
         setHtmlPreviewModal({
           isOpen: true,
           title: data.jsRendered ? `⚠️ Clone (JS-rendered): ${pageName}` : `Clone: ${pageName}`,
           html: clonedHtml,
+          mobileHtml: clonedMobileHtml,
           iframeSrc: '',
           metadata: { method: 'identical', length: data.finalSize || data.content?.length || 0, duration: 0 },
         });
@@ -911,6 +921,7 @@ export default function FrontEndFunnel() {
               isOpen: true,
               title: `Rewrite: ${pageName}`,
               html: rewrittenHtml,
+              mobileHtml: '',
               iframeSrc: '',
               metadata: { method: 'rewrite', length: processData.content?.length || 0, duration: 0 },
             });
@@ -978,6 +989,7 @@ export default function FrontEndFunnel() {
           isOpen: true,
           title: `${data.targetLanguage}: ${pageName}`,
           html: translatedHtml,
+          mobileHtml: '',
           iframeSrc: '',
           metadata: { method: 'translate', length: data.finalHtmlSize || 0, duration: 0 },
         });
@@ -1408,6 +1420,7 @@ export default function FrontEndFunnel() {
                                 isOpen: true,
                                 title: page?.name || 'Result',
                                 html: '',
+                                mobileHtml: '',
                                 iframeSrc: api.result(job.jobId),
                                 metadata: null,
                               });
@@ -1864,6 +1877,7 @@ export default function FrontEndFunnel() {
                                     isOpen: true,
                                     title: page.swipedData.newTitle || page.name,
                                     html: page.swipedData.html,
+                                    mobileHtml: '',
                                     iframeSrc: '',
                                     metadata: {
                                       method: page.swipedData.methodUsed,
@@ -1872,10 +1886,12 @@ export default function FrontEndFunnel() {
                                     },
                                   });
                                 } else if (page.clonedData) {
+                                  setPreviewViewport('desktop');
                                   setHtmlPreviewModal({
                                     isOpen: true,
                                     title: page.clonedData!.title || page.name,
                                     html: page.clonedData!.html,
+                                    mobileHtml: page.clonedData!.mobileHtml || '',
                                     iframeSrc: '',
                                     metadata: {
                                       method: page.clonedData!.method_used,
@@ -2282,7 +2298,7 @@ export default function FrontEndFunnel() {
                 </div>
               </div>
               <button
-                onClick={() => setHtmlPreviewModal({ isOpen: false, title: '', html: '', iframeSrc: '', metadata: null })}
+                onClick={() => setHtmlPreviewModal({ isOpen: false, title: '', html: '', mobileHtml: '', iframeSrc: '', metadata: null })}
                 className="text-white/80 hover:text-white text-2xl font-bold"
               >
                 ×
@@ -2291,7 +2307,7 @@ export default function FrontEndFunnel() {
 
             {/* Modal Body - Tabs */}
             <div className="flex-1 overflow-hidden flex flex-col">
-              <div className="flex border-b border-gray-200">
+              <div className="flex items-center border-b border-gray-200">
                 <button
                   className="px-4 py-2 text-sm font-medium text-blue-600 border-b-2 border-blue-600"
                 >
@@ -2309,7 +2325,9 @@ export default function FrontEndFunnel() {
                 {htmlPreviewModal.html && (
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(htmlPreviewModal.html);
+                      const htmlToCopy = previewViewport === 'mobile' && htmlPreviewModal.mobileHtml
+                        ? htmlPreviewModal.mobileHtml : htmlPreviewModal.html;
+                      navigator.clipboard.writeText(htmlToCopy);
                       alert('HTML copied to clipboard!');
                     }}
                     className="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
@@ -2328,26 +2346,62 @@ export default function FrontEndFunnel() {
                     Open in new tab
                   </a>
                 )}
+
+                {/* Desktop/Mobile viewport switcher */}
+                {htmlPreviewModal.mobileHtml && (
+                  <div className="ml-auto mr-3 flex items-center bg-gray-100 rounded-lg p-0.5 border border-gray-200">
+                    <button
+                      onClick={() => setPreviewViewport('desktop')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                        previewViewport === 'desktop'
+                          ? 'bg-white text-blue-700 shadow-sm border border-blue-200'
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      <Monitor className="w-3.5 h-3.5" />
+                      Desktop
+                    </button>
+                    <button
+                      onClick={() => setPreviewViewport('mobile')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                        previewViewport === 'mobile'
+                          ? 'bg-white text-blue-700 shadow-sm border border-blue-200'
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      <Smartphone className="w-3.5 h-3.5" />
+                      Mobile
+                    </button>
+                  </div>
+                )}
               </div>
               
-              {/* Preview iframe - scripts already stripped by sanitizeClonedHtml, doc.write for full CSS loading */}
-              <div className="flex-1 overflow-hidden bg-gray-100 p-2">
+              {/* Preview iframe */}
+              <div className="flex-1 overflow-hidden bg-gray-100 p-2 flex items-start justify-center">
                 <iframe
-                  key={htmlPreviewModal.html?.length || htmlPreviewModal.iframeSrc || 'empty'}
+                  key={`${previewViewport}-${htmlPreviewModal.html?.length || ''}-${htmlPreviewModal.iframeSrc || 'empty'}`}
                   ref={(iframe) => {
                     if (!iframe) return;
                     if (htmlPreviewModal.iframeSrc) {
                       iframe.src = htmlPreviewModal.iframeSrc;
-                    } else if (htmlPreviewModal.html) {
-                      const doc = iframe.contentDocument || iframe.contentWindow?.document;
-                      if (doc) {
-                        doc.open();
-                        doc.write(htmlPreviewModal.html);
-                        doc.close();
+                    } else {
+                      const htmlToShow = previewViewport === 'mobile' && htmlPreviewModal.mobileHtml
+                        ? htmlPreviewModal.mobileHtml : htmlPreviewModal.html;
+                      if (htmlToShow) {
+                        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+                        if (doc) {
+                          doc.open();
+                          doc.write(htmlToShow);
+                          doc.close();
+                        }
                       }
                     }
                   }}
-                  className="w-full h-full bg-white rounded border border-gray-300"
+                  className={`bg-white rounded border border-gray-300 transition-all duration-300 ${
+                    previewViewport === 'mobile' && htmlPreviewModal.mobileHtml
+                      ? 'w-[390px] h-full shadow-xl border-2 border-gray-400 rounded-[2rem]'
+                      : 'w-full h-full'
+                  }`}
                   title="HTML Preview"
                 />
               </div>
@@ -2397,7 +2451,7 @@ export default function FrontEndFunnel() {
                 </button>
               )}
               <button
-                onClick={() => setHtmlPreviewModal({ isOpen: false, title: '', html: '', iframeSrc: '', metadata: null })}
+                onClick={() => setHtmlPreviewModal({ isOpen: false, title: '', html: '', mobileHtml: '', iframeSrc: '', metadata: null })}
                 className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
               >
                 Close
@@ -2931,8 +2985,41 @@ export default function FrontEndFunnel() {
                     <br />
                     Utile per analizzare la struttura e come base per riscritture successive.
                   </p>
-                  <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 break-all">
+                  <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 break-all mb-4">
                     {cloneModal.url}
+                  </div>
+
+                  {/* Mobile clone toggle */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-left max-w-md mx-auto">
+                    <label className="flex items-center justify-between cursor-pointer group">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-blue-100 group-hover:bg-blue-200 transition-colors">
+                          <Smartphone className="w-5 h-5 text-blue-600" />
+                        </div>
+                        <div>
+                          <span className="text-sm font-semibold text-gray-900 block">Includi versione Mobile</span>
+                          <span className="text-xs text-gray-500">Clona anche la versione mobile (viewport 390x844)</span>
+                        </div>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          checked={cloneMobile}
+                          onChange={(e) => setCloneMobile(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                      </div>
+                    </label>
+                    {cloneMobile && (
+                      <div className="mt-3 flex items-center gap-2 text-xs text-blue-600 bg-blue-100 rounded-lg px-3 py-2">
+                        <Monitor className="w-3.5 h-3.5 shrink-0" />
+                        <span>Desktop (1440x900)</span>
+                        <span className="text-blue-400">+</span>
+                        <Smartphone className="w-3.5 h-3.5 shrink-0" />
+                        <span>Mobile (390x844 iPhone)</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -3207,9 +3294,10 @@ export default function FrontEndFunnel() {
       {showVisualEditor && htmlPreviewModal.html && (
         <VisualHtmlEditor
           initialHtml={htmlPreviewModal.html}
+          initialMobileHtml={htmlPreviewModal.mobileHtml || undefined}
           pageTitle={htmlPreviewModal.title || 'Modifica Landing'}
-          onSave={(html) => {
-            setHtmlPreviewModal(prev => ({ ...prev, html }));
+          onSave={(html, mobileHtml) => {
+            setHtmlPreviewModal(prev => ({ ...prev, html, mobileHtml: mobileHtml || prev.mobileHtml }));
           }}
           onClose={() => setShowVisualEditor(false)}
         />

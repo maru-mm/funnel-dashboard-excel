@@ -12,7 +12,7 @@ async function getBrowser(): Promise<Browser> {
 }
 
 // Clone a page using Playwright headless browser - renders JS, captures full DOM + CSS
-async function cloneWithBrowser(url: string): Promise<{
+async function cloneWithBrowser(url: string, viewport: 'desktop' | 'mobile' = 'desktop'): Promise<{
   html: string;
   title: string;
   renderedSize: number;
@@ -20,10 +20,15 @@ async function cloneWithBrowser(url: string): Promise<{
   imgCount: number;
   isJsRendered: boolean;
 }> {
+  const isMobile = viewport === 'mobile';
   const browser = await getBrowser();
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    viewport: { width: 1440, height: 900 },
+    userAgent: isMobile
+      ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+      : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    viewport: isMobile ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+    isMobile,
+    hasTouch: isMobile,
     ignoreHTTPSErrors: true,
   });
 
@@ -223,23 +228,37 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { cloneMode, url } = body;
+    const viewport: 'desktop' | 'mobile' | 'both' = body.viewport || 'desktop';
 
     // IDENTICAL MODE: use Playwright headless browser for full page rendering
     if (cloneMode === 'identical' && url) {
-      console.log(`🔄 Clone IDENTICAL con Playwright: ${url}`);
+      console.log(`🔄 Clone IDENTICAL con Playwright (${viewport}): ${url}`);
 
       try {
-        const result = await cloneWithBrowser(url);
+        const result = await cloneWithBrowser(url, 'desktop');
         
-        console.log(`✅ Clone completato: ${result.renderedSize.toLocaleString()} chars, ${result.cssCount} CSS, ${result.imgCount} immagini`);
+        console.log(`✅ Clone desktop completato: ${result.renderedSize.toLocaleString()} chars, ${result.cssCount} CSS, ${result.imgCount} immagini`);
+
+        let mobileResult = null;
+        if (viewport === 'mobile' || viewport === 'both') {
+          try {
+            console.log(`📱 Clone MOBILE con Playwright: ${url}`);
+            mobileResult = await cloneWithBrowser(url, 'mobile');
+            console.log(`✅ Clone mobile completato: ${mobileResult.renderedSize.toLocaleString()} chars`);
+          } catch (mobileErr) {
+            console.error('⚠️ Mobile clone failed, desktop only:', mobileErr);
+          }
+        }
 
         return NextResponse.json({
           success: true,
-          content: result.html,
+          content: viewport === 'mobile' && mobileResult ? mobileResult.html : result.html,
+          mobileContent: mobileResult?.html || null,
           format: 'html',
           mode: 'identical',
           originalSize: result.renderedSize,
           finalSize: result.html.length,
+          mobileFinalSize: mobileResult?.html.length || null,
           cssInlined: true,
           cssCount: result.cssCount,
           imgCount: result.imgCount,
@@ -272,6 +291,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({
             success: true,
             content: fallbackHTML,
+            mobileContent: null,
             format: 'html',
             mode: 'identical',
             originalSize: fallbackHTML.length,
