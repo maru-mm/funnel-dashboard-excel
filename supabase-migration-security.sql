@@ -166,12 +166,12 @@ BEGIN
   EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', p_table);
 
   IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = p_table AND policyname = p_old_policy) THEN
-    EXECUTE format('DROP POLICY %L ON %I', p_old_policy, p_table);
+    EXECUTE format('DROP POLICY %I ON %I', p_old_policy, p_table);
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = p_table AND policyname = p_new_policy) THEN
     EXECUTE format(
-      'CREATE POLICY %L ON %I FOR ALL USING (auth.role() = ''service_role'' OR user_id = auth.uid() OR user_id IS NULL) WITH CHECK (auth.role() = ''service_role'' OR user_id = auth.uid() OR user_id IS NULL)',
+      'CREATE POLICY %I ON %I FOR ALL USING (auth.role() = ''service_role'' OR user_id = auth.uid() OR user_id IS NULL) WITH CHECK (auth.role() = ''service_role'' OR user_id = auth.uid() OR user_id IS NULL)',
       p_new_policy, p_table
     );
   END IF;
