@@ -1,19 +1,51 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // 'standalone' is only needed for Docker/Fly.io self-hosting.
-  // On Vercel, omit it so Fluid Compute and maxDuration work correctly.
+  poweredBy: false,
   ...(process.env.STANDALONE === 'true' ? { output: 'standalone' } : {}),
-  typescript: { ignoreBuildErrors: true },
-  eslint: { ignoreDuringBuilds: true },
+
+  // SOC 2: Don't ignore type/lint errors in production builds
+  typescript: { ignoreBuildErrors: process.env.NODE_ENV !== 'production' },
+  eslint: { ignoreDuringBuilds: process.env.NODE_ENV !== 'production' },
+
   experimental: {
     serverComponentsExternalPackages: [
       'playwright-core',
       '@sparticuz/chromium',
     ],
     serverActions: {
-      bodySizeLimit: '50mb',
+      bodySizeLimit: '10mb',
     },
+  },
+
+  // Security headers applied at the server level (backup for middleware)
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'X-XSS-Protection', value: '1; mode=block' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=31536000; includeSubDomains; preload',
+          },
+          {
+            key: 'Permissions-Policy',
+            value: 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+          },
+        ],
+      },
+      {
+        source: '/api/:path*',
+        headers: [
+          { key: 'Cache-Control', value: 'no-store, no-cache, must-revalidate' },
+          { key: 'Pragma', value: 'no-cache' },
+        ],
+      },
+    ];
   },
 }
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withGuard, isValidUUID, validateBody, audit } from '@/lib/security';
 import {
   fetchSavedPrompts,
   createSavedPrompt,
@@ -7,88 +8,98 @@ import {
   incrementPromptUseCount,
 } from '@/lib/supabase-operations';
 
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const category = searchParams.get('category');
+export const GET = withGuard(async (request: NextRequest, { ip }) => {
+  const { searchParams } = new URL(request.url);
+  const category = searchParams.get('category');
 
-    let prompts;
-    if (category) {
-      const { fetchSavedPromptsByCategory } = await import('@/lib/supabase-operations');
-      prompts = await fetchSavedPromptsByCategory(category);
-    } else {
-      prompts = await fetchSavedPrompts();
-    }
-
-    return NextResponse.json({ prompts });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Failed to fetch prompts';
-    return NextResponse.json({ error: message }, { status: 500 });
+  let prompts;
+  if (category) {
+    const { fetchSavedPromptsByCategory } = await import('@/lib/supabase-operations');
+    prompts = await fetchSavedPromptsByCategory(category);
+  } else {
+    prompts = await fetchSavedPrompts();
   }
-}
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { title, content, category, tags, is_favorite } = body;
+  await audit.info('DATA_READ', 'Fetched saved prompts', {
+    actor_ip: ip,
+    resource_type: 'saved_prompts',
+    details: { count: prompts.length, category },
+  });
 
-    if (!title || !content) {
-      return NextResponse.json(
-        { error: 'Title and content are required' },
-        { status: 400 }
-      );
-    }
+  return NextResponse.json({ prompts });
+}, { rateLimit: 'api' });
 
-    const prompt = await createSavedPrompt({
-      title,
-      content,
-      category: category || 'general',
-      tags: tags || [],
-      is_favorite: is_favorite || false,
-    });
+export const POST = withGuard(async (request: NextRequest, { ip }) => {
+  const body = await request.json();
 
-    return NextResponse.json({ prompt });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Failed to create prompt';
-    return NextResponse.json({ error: message }, { status: 500 });
+  const { valid, data, errors } = validateBody(body, {
+    title: { type: 'string', required: true, minLength: 1, maxLength: 500 },
+    content: { type: 'string', required: true, minLength: 1, maxLength: 50000 },
+    category: { type: 'string', maxLength: 100 },
+    tags: { type: 'array' },
+    is_favorite: { type: 'boolean' },
+  });
+
+  if (!valid) {
+    return NextResponse.json({ error: 'Validation failed', details: errors }, { status: 400 });
   }
-}
 
-export async function PUT(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { id, action, ...updates } = body;
+  const prompt = await createSavedPrompt({
+    title: data.title as string,
+    content: data.content as string,
+    category: (data.category as string) || 'general',
+    tags: (data.tags as string[]) || [],
+    is_favorite: (data.is_favorite as boolean) || false,
+  });
 
-    if (!id) {
-      return NextResponse.json({ error: 'ID is required' }, { status: 400 });
-    }
+  await audit.info('DATA_CREATE', 'Created saved prompt', {
+    actor_ip: ip,
+    resource_type: 'saved_prompts',
+    resource_id: prompt.id,
+  });
 
-    if (action === 'increment_use') {
-      await incrementPromptUseCount(id);
-      return NextResponse.json({ success: true });
-    }
+  return NextResponse.json({ prompt });
+}, { rateLimit: 'api' });
 
-    const prompt = await updateSavedPrompt(id, updates);
-    return NextResponse.json({ prompt });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Failed to update prompt';
-    return NextResponse.json({ error: message }, { status: 500 });
+export const PUT = withGuard(async (request: NextRequest, { ip }) => {
+  const body = await request.json();
+  const { id, action, ...updates } = body;
+
+  if (!id || !isValidUUID(id)) {
+    return NextResponse.json({ error: 'Valid UUID id is required' }, { status: 400 });
   }
-}
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id) {
-      return NextResponse.json({ error: 'ID is required' }, { status: 400 });
-    }
-
-    await deleteSavedPrompt(id);
+  if (action === 'increment_use') {
+    await incrementPromptUseCount(id);
     return NextResponse.json({ success: true });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Failed to delete prompt';
-    return NextResponse.json({ error: message }, { status: 500 });
   }
-}
+
+  const prompt = await updateSavedPrompt(id, updates);
+
+  await audit.info('DATA_UPDATE', 'Updated saved prompt', {
+    actor_ip: ip,
+    resource_type: 'saved_prompts',
+    resource_id: id,
+  });
+
+  return NextResponse.json({ prompt });
+}, { rateLimit: 'api' });
+
+export const DELETE = withGuard(async (request: NextRequest, { ip }) => {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get('id');
+
+  if (!id || !isValidUUID(id)) {
+    return NextResponse.json({ error: 'Valid UUID id is required' }, { status: 400 });
+  }
+
+  await deleteSavedPrompt(id);
+
+  await audit.info('DATA_DELETE', 'Deleted saved prompt', {
+    actor_ip: ip,
+    resource_type: 'saved_prompts',
+    resource_id: id,
+  });
+
+  return NextResponse.json({ success: true });
+}, { rateLimit: 'api' });

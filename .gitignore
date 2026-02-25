@@ -35,8 +35,17 @@ coverage/
 
 # Misc
 .DS_Store
-*.pem
 Thumbs.db
+
+# Security — never commit secrets or credentials
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+service-account*.json
 
 # IDE
 .idea/
